@@ -1,0 +1,39 @@
+name: 'Standard Aggressive'
+description: 'Standard balanced strategy'
+minLiquidityUsd: 950
+minHolderCount: 5
+maxRecheckAttempts: 2
+minCandidateScore: 65
+stopLossPct: 0.1
+slippageBps: 300
+takeProfitMultiples: [1.18, 1.6]
+takeProfitMultiplesHigh: [1.26, 1.8]
+takeProfitFractions: [0.75, 0.6]
+trailingStopDrawdownPct: 0.14
+maxHoldMinutes: 20
+holdDurationHighConfidenceMinutes: 30
+survivalDelaySeconds: 20
+maxOpenPositions: 5
+minSurvivalMomentum: 1.01
+minBreakoutMultiplier: 1.00
+maxPriceDumpPct: 18
+maxSurvivalGrowthPct: 450
+maxSellPressureIncreasePct: 110
+maxAuditTopHoldersPct: 66
+minMomentumConsistency: 0.65
+minAccelerationFactor: 0.3
+maxConcurrentAudits: 12
+scanParallelismLight: 8
+scanParallelismHeavy: 3
+ownerAuditParallelism: 2
+priceFallbackParallelism: 6
+parallelismMinFactor: 0.55
+errorRateWindow: 30
+backpressureErrorRateThreshold: 0.22
+mintSignalMaxAttempts: 2
+mintSignalRetryDelayMs: 500
+rpcIndexingRetryDelayMs: 5000
+mlScoreGateThreshold: 0.35
+mlScoreWeight: 0.3
+breakEvenStopTriggerMultiple: 1.09
+breakEvenStopFloorPct: 0.07

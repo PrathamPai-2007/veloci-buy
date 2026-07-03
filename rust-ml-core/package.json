@@ -1,0 +1,14 @@
+{
+  "name": "rust-ml-core",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "name": "rust-ml-core"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform"
+  }
+}

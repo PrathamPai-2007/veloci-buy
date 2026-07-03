@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20.19.0'
+          node-version: '24.x'
           cache: npm
 
       - name: Install dependencies
@@ -40,6 +40,12 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust Module
+        run: npm run build:rust
 
       - name: Tests
         run: npm test

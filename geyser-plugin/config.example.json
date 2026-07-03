@@ -1,0 +1,10 @@
+{
+  "libpath": "target/release/libveloci_geyser_plugin.so",
+  "socket_path": "/tmp/veloci-geyser.sock",
+  "tcp_addr": "127.0.0.1:9123",
+  "owner_allowlist": [
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo"
+  ]
+}

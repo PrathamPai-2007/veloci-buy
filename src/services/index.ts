@@ -3,6 +3,7 @@ export * from './scanner/scanner.service.js';
 export {
   getLaunchpadAdjustedThresholds,
   computeCandidateScore,
+  computeMomentumScore,
   countSocialLinksHelper,
   finiteNumberHelper,
 } from './engine/engine.service.js';

@@ -1,0 +1,11 @@
+[package]
+name = "rust-ml-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "2.12.0", default-features = false, features = ["napi4"] }
+napi-derive = "2.12.0"

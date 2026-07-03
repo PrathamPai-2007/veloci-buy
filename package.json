@@ -1,24 +1,41 @@
 {
   "name": "veloci-buy",
-  "version": "2.6.0",
+  "version": "3.0.0",
   "private": true,
+  "type": "module",
   "description": "High-performance Solana discovery and execution engine with Jupiter execution and staged audit filters.",
-  "main": "bot.js",
+  "main": "dist/index.js",
   "engines": {
     "node": ">=20.19.0"
   },
+  "imports": {
+    "#core/*": "./dist/core/*",
+    "#ml/*": "./dist/ml/*",
+    "#services/*": "./dist/services/*",
+    "#types/*": "./dist/types/*"
+  },
   "scripts": {
-    "build": "tsc",
+    "dev": "cd website && npm run dev",
+    "dev:all": "node --import tsx scripts/start-all.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "build:rust": "cd rust-ml-core && napi build --platform --release",
+    "build:rust:win": "powershell -NoProfile -File scripts/build-rust.ps1",
     "start": "tsx src/index.ts",
     "start:prod": "node dist/index.js",
-    "test": "node --import tsx --test tests/*.test.js",
-    "check": "node scripts/check-syntax.js",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "tsx scripts/check-syntax.ts",
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "audit": "npm audit",
     "analyze-pnl": "tsx src/core/pnl-analyzer.ts",
-    "ci": "npm run audit && npm run check && npm run lint && npm run format:check && npm run build && npm test"
+    "backtest": "node --import tsx scripts/backtest-entries.ts",
+    "manage-keystore": "tsx scripts/manage-keystore.ts",
+    "train-history": "node --import tsx scripts/train-from-history.ts",
+    "fetch-data": "node --import tsx scripts/fetch-market-data.ts",
+    "optimizer": "node --import tsx scripts/optimize.ts",
+    "ci": "npm run audit && npm run check && npm run lint && npm run format:check && npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.48",
@@ -27,16 +44,27 @@
     "@solana/rpc-subscriptions": "^2.0.0",
     "@solana/signers": "^2.0.0",
     "@solana/transactions": "^6.8.0",
-    "bs58": "^6.0.0"
+    "@types/ws": "^8.18.1",
+    "better-sqlite3": "^12.10.0",
+    "blessed": "^0.1.81",
+    "borsh": "^2.0.0",
+    "bs58": "^6.0.0",
+    "js-yaml": "^4.1.1",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^25.9.1",
+    "@napi-rs/cli": "^2.18.3",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/blessed": "^0.1.27",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^25.9.2",
     "@typescript-eslint/eslint-plugin": "^8.60.0",
     "@typescript-eslint/parser": "^8.60.0",
     "eslint": "^10.3.0",
+    "eslint-plugin-import-x": "^4.16.2",
     "prettier": "^3.8.3",
-    "tsx": "^4.22.3",
+    "tsx": "^4.22.4",
     "typescript": "^6.0.3"
   }
 }
