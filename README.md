@@ -1,250 +1,266 @@
-# Veloci-Buy: High-Performance Solana Discovery & Execution Engine
+# Veloci-Buy: A High-Performance Solana Discovery & Execution Engine
 
-![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.19.0-blue)
-![Solana](https://img.shields.io/badge/blockchain-Solana-black)
-![License](https://img.shields.io/badge/license-MIT-green)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D20.19.0-blue?style=for-the-badge&logo=node.js)](https://nodejs.org)
+[![Solana](https://img.shields.io/badge/blockchain-Solana-black?style=for-the-badge&logo=solana)](https://solana.com)
+[![TypeScript](https://img.shields.io/badge/language-TypeScript-blue?style=for-the-badge&logo=typescript)](https://www.typescriptlang.org)
+[![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 ---
 
-## Disclaimer
-
-> [!WARNING]
-> **Financial Risk**: Trading cryptocurrencies, especially memecoins on Solana, involves significant risk of loss. This software is provided "as is" without warranty of any kind. Always test your strategies in `PAPER_TRADING=true` and `DRY_RUN=true` modes. Never deploy capital you cannot afford to lose.
+> [!CAUTION]
 >
-> **Tax Responsibility**: Ensure you know the tax laws in your country and pay taxes responsibly. The developers and contributors of Veloci-Buy are not responsible for your tax obligations or compliance.
+> ### 🛑 LEGAL & FINANCIAL DISCLAIMER
+>
+> **1. Financial Risk Warning**
+> Trading digital assets, particularly highly volatile memecoins on the Solana blockchain (e.g., decentralized liquidity pools), involves an extremely high level of risk and may not be suitable for all investors. You may lose all or more than your initial investment. Only trade with capital you can afford to lose.
+>
+> **2. No Warranties & Limitation of Liability**
+> This software is provided "as is" and "as available", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors, developers, or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.
+>
+> **3. Simulation & Sandboxing**
+> Users are strongly advised to run the bot in paper-trading and dry-run modes extensively before risking actual capital. Past performance is not indicative of future results.
+>
+> **4. Tax and Regulatory Compliance**
+> Cryptocurrency taxation and regulations vary by jurisdiction. You are solely responsible for identifying, declaring, and paying any taxes due to your local tax authorities. The authors and contributors do not provide legal, tax, or investment advice.
 
 ---
 
-**Veloci-Buy** is an industry-grade, event-driven discovery and sniping engine engineered for the Solana ecosystem. Designed for professional traders and developers, it delivers sub-second reaction times by combining a high-concurrency ingestion pipeline with a sophisticated, multi-stage risk mitigation architecture.
+Veloci-Buy was conceived as a lightweight script designed to snipe token liquidity pools on Solana. Today, it has matured into a production-grade, event-driven discovery and execution pipeline optimized for the most volatile trading environments.
 
-> [!NOTE]
-> **Performance & Precision**: Veloci-Buy bypasses traditional API latency by subscribing directly to program logs via WebSockets, ensuring your execution hits the chain before the crowd.
+### Core Components
 
----
-
-## Technical Architecture
-
-Veloci-Buy is built on a decoupled, service-oriented architecture that prioritizes modularity and low-latency execution:
-
-- **Orchestration ([src/index.ts](src/index.ts))**: Encapsulated within the `VelociBuyBot` class, managing high-precision loop watchdogs, system lifecycle, and global event coordination with resilient shutdown handlers.
-- **Scanner Service ([src/services/scanner/scanner.service.ts](src/services/scanner/scanner.service.ts))**: Handles candidate identification, multi-stage audit scheduling, and re-audit loops.
-- **Event Ingestion ([src/services/discovery/discovery.service.ts](src/services/discovery/discovery.service.ts))**: A high-speed log ingestion and parsing pipeline for real-time WebSocket discovery.
-- **Heuristic Engine ([src/services/engine/engine.service.ts](src/services/engine/engine.service.ts))**: Scores candidates using organic traction metrics, GMI filters, and momentum analysis.
-- **Security Audit ([src/services/audit/audit.service.ts](src/services/audit/audit.service.ts))**: Direct RPC-based authority audits and smart holder concentration checks.
-- **Execution Adapter ([src/services/trading/trading.service.ts](src/services/trading/trading.service.ts))**: Jupiter swap builder supporting paper simulations, dry-runs, and live orders.
-- **Risk Monitor ([src/services/monitor/monitor.service.ts](src/services/monitor/monitor.service.ts))**: Dynamic profit targets, trailing stop-losses, insider drift guards, and spread velocity exit checks.
-- **State Store ([src/core/store.ts](src/core/store.ts))**: Atomically persists runtime states, cool-downs, and historical stats.
-- **Toolkit ([src/core/utils.ts](src/core/utils.ts))**: Shared logging, serialization, notification, and async flow pools.
-
----
-
-## Key Innovations (v2.x)
-
-### Sub-Second Discovery Engine
-
-The bot now parses program logs directly for **Pump.fun**, extracting mint addresses the instant they are created. This bypasses the traditional 200ms–1s RPC indexing lag required for full transaction lookups, ensuring your bot sees the token before it even appears on most scanners.
-
-### Batch Audit Inspection
-
-By utilizing `getMultipleAccounts` for holder and authority audits, the bot consolidates dozens of RPC calls into a single high-speed request. This drastically reduces the "Full Audit" duration, which is critical for winning competitive snipes in low-liquidity environments.
-
-### Smart RPC Failover & Health Tracking
-
-A new unified RPC provider layer tracks the health of every endpoint in your pool. If a provider degrades or hits a rate limit, the bot automatically fails over to the next healthy candidate in real-time, ensuring zero downtime during volatile market conditions.
-
-### API Circuit Breakers & Fail-Safe Logic
-
-The security pipeline is now resilient to external API outages. If GoPlus or BubbleMaps experience downtime or timeouts, the bot automatically switches to stricter **Local On-Chain Heuristics**, protecting your capital even when third-party services fail.
-
-### Incremental State Persistence
-
-To maintain peak performance during long sessions, the bot utilizes a dual-track persistence model. Active trading state is saved frequently, while bulky historical data is offloaded lazily, preventing event loop "stutters" that can cause execution delays.
+- **Orchestration**: Coordinating service lifecycles, connection pool managers, failover clusters, and graceful shutdown watchdogs.
+- **Event Ingestion**: Establishes high-speed WebSocket listeners tracking raw instruction logs to bypass explorer latency. Includes a built-in retry queue to recover transactions temporarily dropped by RPC indexing lag.
+- **Trending Discovery**: Alongside new-mint discovery, polls top-traded feeds, filters to targets, and tags trending candidates to prioritize them in the audit queue and relax specific anti-top guards.
+- **Scanner Service**: Identifies candidates, schedules recheck loops, and gates tokens using survival delays.
+- **Security Audit**: Analyzes mint authorities and top holder concentrations. Falls back to local on-chain heuristics if external security APIs experience service degradation.
+- **Decision Engine**: Evaluates candidate token metadata, social linking metrics, and volume momentum consistency, then layers a momentum/flow delta onto the structural score. Enforces a minimum market-cap floor, restricts entries to early mechanics, and swaps in relaxed thresholds for trending coins.
+- **Execution Adapter**: Builds and signs transactions, utilizing priority-fee estimators and private validator bundle networks to prevent front-running and MEV sandwich attacks.
+- **Risk Monitor**: Tracks open positions using real-time price feeds. Manages a layered early-exit stack (rug-exit guard, early-performance guard, graduated stop-loss), trailing drawdowns, concentration-aware insider-drift exits, a moon-bag runner on a wide trailing stop, and emergency liquidity-collapse shutdowns.
+- **Swing Bot**: Graduated-token swing trader running on its own dedicated loop. Maintains a watchlist of graduated tokens, accumulates price history and on-chain swap tape, and enters on double-dip and volume-accumulation signals.
+- **Ghost Trader**: Runs parallel virtual positions on top candidates, generating ground-truth training samples from real price movement with zero capital at risk.
+- **Market Data Fetcher**: Offline pipeline that fetches historical candle data for top new tokens via external APIs for backtesting and machine learning training.
+- **ML Service**: Orchestrates model training, weight persistence, parameter optimization, and cold-start gating. Runs off-thread to prevent blocking execution.
+- **Native ML Core**: A compiled native addon hosting the sequence model and reinforcement learning exit policy.
+- **Geyser Ingestion**: Optional low-latency account stream from a validator, layered on top of RPC polling. Includes memory-safe eviction caps to prevent deduplication leaks.
+- **SQLite Store**: Encapsulates position tracking, completed trades, training samples, and operational statistics inside a transactional SQLite database. Writes are batched and flushed from a dedicated persistence worker thread to keep serialization off the execution path.
 
 ---
 
-## Staged Risk Mitigation Pipeline
+## The Evolutionary Journey: From Legacy Sniper to Quantitative Engine
 
-Veloci-Buy employs a rigorous multi-gate audit strategy to protect capital:
+### 🔹 V1.x era
 
-1.  **Survival Delay**: Dynamic wait times (5s–25s) based on initial candidate quality to filter out instant rug-pulls.
-2.  **Anti-FOMO Filters**: Prevents "buying the top" by detecting parabolic growth and entering a pullback recheck loop.
-3.  **Liquidity Guard**: Continuous monitoring of pool depth; triggers emergency exits if liquidity collapses below the calculated floor.
-4.  **FDV-to-Liquidity Analysis**: Rejects tokens with disproportionate valuations that are prone to extreme slippage and manipulation.
+- **Architecture**: Monolithic polling structures that fetched token updates directly from standard RPC endpoints.
+- **Limitations**: Suffered from indexing lag and rate-limiting blocks. State was saved in flat, corruption-prone files. Strategies were hardcoded directly in code, preventing dynamic parameter tuning.
+
+### 🔹 V2.x Era
+
+- **Sub-Second WS Ingestion**: Integrated raw WebSocket subscription to Sol log streams, enabling mint address identification before transaction indexing completes.
+- **Quant Indicator Upgrades**: Added market mood filtering via the Global Momentum Index, volatility-adaptive risk metrics, and multiple different exits.
+- **Major Refactor**: Refactored the monolithic bot into smaller modules for cleaner execution and debugging.
+
+### 🔹 V3.x Era
+
+The V3.x era represents the most significant evolution of Veloci-Buy, transforming it from a reactive sniper into a quantitative trading engine with native machine learning, MEV-protected execution, and multiple parallel trading strategies.
+
+#### Codebase Modernization
+
+- **Full TypeScript Transition**: Ported all core logic and utility scripts to strict TypeScript, defining structured data contracts across the codebase.
+- **ACID-Compliant State Store**: Replaced JSON writing with an active database engine operating in Write-Ahead Log (WAL) mode, achieving crash-resilient, non-blocking disk writes.
+- **Reactive Cooldown Expiry**: Replaced coarse polling loops with non-blocking, event-driven timers registered dynamically to State Store events.
+- **Modular Strategies**: Presets are externalized into configuration files, allowing hot-swapping configurations via CLI flags at runtime.
+
+#### Execution & MEV Protection
+
+- **MEV Protection & Smart Routing**: Built a multi-stage execution pipeline routing orders dynamically via validator bundles or swap paths with smart slippage auto-retries.
+- **Dynamic Tip & Confirmation Engine**: Integrates real-time Block Engine queries to dynamically calculate percentile-based tips, monitor confirmation status, and execute transaction re-signing on bundle retry loops.
+
+#### Entry Intelligence & Security Hardening
+
+- **Expectancy-Driven Entry Optimization**: A financial-optimization pass driven by trading journals, tuned for net expectancy — eliminating catastrophic losers at entry and letting winners run — rather than raw win-rate.
+- **Unconditional Top-5 Concentration Gate**: Rejects launches where the top 5 holders control more than a configured threshold. It reuses holder shares already computed during the audit (zero added snipe latency) and runs on every candidate, closing the gap that previously let wallet setups through on the top-1 check alone.
+- **Momentum/Flow Entry Delta**: A signed delta layered on top of the structural score reads buy/sell imbalance, buy-flow acceleration, and price trajectory off the survival baseline — validated mainly as a downside filter that demotes tokens visibly dumping in the survival window.
+
+#### Risk Management & Exit Controls
+
+- **Moon-Bag Runner**: A reserved tranche of every non-burst position is exempt from routine take-profit and rides a much wider trailing stop, holding a free option on a moonshot while the bulk still books profit.
+- **Loss-Streak Breaker**: After consecutive losing positions, new entries pause for a configured cooldown duration — catching a slow bleed of small losses that the coarse portfolio-drawdown breaker is too slow to react to.
+- **Legal PnL Reporting**: Generates compliant Markdown reports documenting gross profits, losses, and transaction histories.
+
+#### Machine Learning & Adaptive Intelligence
+
+- **Native Machine Learning Core**: Replaced the pure-JS neural network with a high-performance native machine learning engine compiled via `napi-rs`.
+  - **LSTM Sequence Model**: A custom Long Short-Term Memory network that scores a token's pre-entry price-history sequence — momentum shape rather than a single snapshot.
+  - **RL Exit Optimizer**: An opt-in Proximal Policy Optimization agent that reads the market regime and outputs continuous, optimal exit parameters.
+- **Continuous Ghost Trading**: Continuously opens zero-capital ghost positions on top candidates and tracks them against live market data to generate ground-truth training samples without capital risk, with full take-profit ladder simulation and calibrated labels.
+- **Genetic Algorithm Optimizer**: A fast parallelized evolutionary algorithm that continuously evolves entry/exit parameters over trading journals, automatically compiling hot-swappable strategies.
+
+#### Alternate Trading Modes & Ingestion
+
+- **Geyser Plugin Integration**: An optional validator plugin that intercepts block/account updates and streams them over low-latency socket connections, bypassing RPC overhead. Includes native bonding-curve decoding to resolve prices and liquidity directly from the binary stream.
+- **Burst Mode (Experimental)**: An optional high-speed scalp strategy targeting a single +20% exit on volatile memecoins. Uses a 5-minute maximum hold and an 8% trailing stop. Activated via a single flag or a dashboard toggle.
+- **Swing Bot (Experimental)**: A patient swing-trading module that runs as a parallel loop alongside the sniper. Targets tokens whose bonding curve has completed (graduated to standard pools) and holds for minutes-to-hours. Signal types are combined into a composite score: a double-dip W-pattern detector and a volume-accumulation filter. Exit uses a wide flat stop, trailing stop arming, and a three-rung take-profit ladder. Dedicated API configurations keep swing rate-limit state isolated. A two-speed poll mechanism arms a fast-poll cycle once a partial W forms, yielding tighter entry timing. Volume accuracy comes from tick-level swap tape tracking, covering multiple pool types: Raydium AMM, Raydium CLMM, and Meteora DLMM.
 
 ---
 
-## Quick Start
+## Token Evaluation Pipeline
+
+Veloci-Buy filters out scams and high-risk setups through a series of automated check gates:
+
+```
+[MINT SIGNAL]
+     │
+     ▼
+┌─────────────────────────┐
+│ 1. Survival Delay Gate  │ ──► Dynamic wait times filtering out instant developer rug-pulls
+└─────────────────────────┘
+     │
+     ▼
+┌─────────────────────────┐
+│ 2. Security Audit Gate  │ ──► Checks freeze authority, mint ownership, and holder concentration
+└─────────────────────────┘
+     │
+     ▼
+┌─────────────────────────┐
+│ 3. Valuation & Depth    │ ──► Rejects tokens with unbalanced pool depth or excessive market caps
+└─────────────────────────┘
+     │
+     ▼
+┌─────────────────────────┐
+│  4. Anti-FOMO Guard     │ ──► Pauses execution if token is experiencing extreme parabolic growth
+└─────────────────────────┘
+     │
+     ▼
+┌─────────────────────────┐
+│  5. ML Confidence Gate  │ ──► Neural network blocks low-confidence candidates
+└─────────────────────────┘
+     │
+     ▼
+[BUY EXECUTION]
+```
+
+---
+
+## 🖥️ Web Dashboard & UI
+
+Veloci-Buy includes a React SPA dashboard connected directly to the Solana trading engine via high-speed WebSockets. The UI leverages a custom GSAP design system for a fluid and responsive feel.
+
+- **Live Activity Log**: Engine log events are streamed in real time to the dashboard's activity panel — no separate terminal window needed to follow what the bot is doing.
+- **Auth token auto-sync**: Running `npm run dev:all` automatically generates an `API_TOKEN` in `.env` (if absent) and mirrors it into `website/.env.local`, so the dashboard authenticates without any manual configuration.
+- A custom process orchestrator prefixes backend engine logs as `[BOT]` (cyan) and web logs as `[WEB]` (magenta), cleaning up all child processes automatically upon exit.
+
+---
+
+## ⚡ Quick Start
 
 ### 1. Prerequisites
 
 - **Node.js**: `>= 20.19.0`
-- **Solana RPC**: Access to one or more high-quality RPC/WS endpoints.
-- **Jupiter API**: Required for execution and price feeds.
+- **RPC Endpoints**: High-quality Solana HTTP and WS endpoints.
+- **Jupiter API Access**: Required to calculate swap pricing and route orders. Jupiter rate-limits per account — set `JUPITER_POSITION_API_KEY` (a key from a **second** Jupiter account) to avoid 429 collisions between discovery and exit sells. See [dev-onboarding.md](dev-onboarding.md#5-jupiter-429-errors-on-exits-jupiter-sdk-error-429) for setup steps.
+- **Rust toolchain (optional)**: Required only to build the native machine learning core. Without it, the bot falls back to default execution and shadow mode.
 
-### 2. Installation
+### 2. Installation & Setup
 
 ```bash
+# Install dependencies
 npm install
-cp .env.example .env
+
+# Configure environment secrets
+# (Copy the environment variables template to your local environment file and fill in keys)
+
+# (Optional) build the native machine learning core.
+# On Linux/macOS with a Rust toolchain:
+npm run build:rust
+# On Windows (loads the build environment automatically):
+npm run build:rust:win
 ```
 
-_Configure your RPC URLs and private keys in the `.env` file._
-
-### 3. Execution
+### 3. Running the Bot
 
 ```bash
-# Start the bot in Paper Trading mode (recommended for first run)
+
+# Start the bot in plain, CLI log based mode
 npm start
 
-# Run the full CI validation suite
-npm run ci
+# Start paper trading with a CLI Terminal UI
+npm start -- --tui
+
+# Start the web dashboard only (no bot — for frontend dev/testing)
+npm run dev
+
+# Start the bot and web dashboard together
+npm run dev:all
+
+# Build and run the optimized production container
+npm run build
+npm run start:prod
+
+# Generate a PnL report (Markdown) for a specific session directory
+npm run analyze-pnl -- logs/session-xxx
 ```
 
 ---
 
-## Engineering Excellence
+## 🧪 Modular Test & Validation Suite
 
-Veloci-Buy is maintained with high engineering standards to ensure reliability in volatile markets:
+Veloci-Buy maintains high test coverage using a robust, modular test suite built entirely on the native testing framework. The suite is divided into logical test types:
 
-- **Atomic State Persistence**: Custom `atomicWriteFile` utility ensures state files remain corruption-proof on all operating systems.
-- **Dynamic Syntax Validation**: Recursive syntax validator (`check-syntax.js`) scans all JavaScript files automatically without requiring manual updates to package scripts.
-- **Hardened ESLint Rules**: Strictly enforces `'use strict';` global declarations, modern block scoping (`no-var`, `prefer-const`), strict type-safe equality (`===`), and variable shadowing protection.
-- **Comprehensive Testing**: A full suite of unit and integration tests covering the entire trading lifecycle.
-- **CI Pipeline**: Automated dependency audit, dynamic syntax checking, hardened linting, formatting, and test validation on every commit.
+### 1. Core Unit & Utility Validation
 
----
+- **Unit Tests**: Validates core mathematical utilities (standard deviation, spread calculations), binary decoding, safe JSON serialization, file locks, and cache evictions.
+- **Keystore Tests**: Assures encryption/decryption of operator private keys, password integrity checks, and validation error paths.
 
-## Verification & Modular Test Suite
+### 2. Strategy & Configuration Constraints
 
-Veloci-Buy uses a robust, modular test suite leveraging Node's native `node:test` runner. The monolithic `tests.js` has been refactored into focused files under the `tests/` directory:
+- **Config Tests**: Validates startup constraints (slippage limits, stop-loss percentages, fraction ranges), environment variable mapping, and invalid config rejections.
+- **Strategy Tests**: Validates strategy loading, fallback behaviors for missing or deleted presets, and parser error recovery.
 
-- **[tests/\_test_helpers.js](tests/_test_helpers.js)**: Reusable configurations, sandbox context states, `fetch` mockers, member patchers, and state seeds.
-- **[tests/engine.test.js](tests/engine.test.js)**: Evaluates decision engine scoring, GMI aggro modifications, memecoin filter matching, and candidate evaluation buffers.
-- **[tests/scanner.test.js](tests/scanner.test.js)**: Tests event schedules, survival delay tiers, indexing-lag wait caps, and slot reservations.
-- **[tests/services.test.js](tests/services.test.js)**: Exercises the high-level trade lifecycle including paper swaps, dry-runs, and token balance queries.
-- **[tests/audit.test.js](tests/audit.test.js)**: Exercises token authority safety audits, indexing lag retries, and GoPlus address scanning.
-- **[tests/monitor.test.js](tests/monitor.test.js)**: Focuses on dynamic TP/SL execution, volatility stop-loss bounds, insider drift, and emergency exits.
-- **[tests/config.test.js](tests/config.test.js)**: Validates startup constraints, live trading safety checks, and invalid bounds rejection.
-- **[tests/utils.test.js](tests/utils.test.js)**: Covers Windows EPERM write retries, safe JSON serialization, standard deviation, and curve decoders.
+### 3. State Persistence & Legacy Migration
 
-### Run Commands
+- **Migration Tests**: Exercises the conversion pipeline from legacy storage to the active database schema, ensuring data integrity and backups.
+
+### 4. Real-time Ingestion & WebSocket Discovery
+
+- **Discovery Tests**: Mocks WebSocket log notification channels to test parsing accuracy for Raydium, Meteora, and other pools. Verifies debounced flush intervals and connection watchdogs.
+- **Scanner Tests**: Verifies candidate sorting queues, retry parameters, candidate queue scheduling, survival delays, and index lag requeues.
+
+### 5. Dynamic Risk Control & PnL Monitoring
+
+- **Monitor Tests**: Validates dynamic stop-loss levels, trailing drawdowns, take-profit target executions, minimum holding periods, and insider-wallet drift sensors.
+- **Portfolio Tests**: Tests global risk controls including daily drawdown safety triggers, max open position counts, launchpad sector concentration limits, and dynamic position-size scaling.
+- **Audit Tests**: Asserts mint authority audits, holder concentration metrics, and autonomous local-chain fallback audits when external APIs are down.
+
+### 6. Execution, Jupiter Swap & Jito Routing
+
+- **Trading Tests**: Validates priority fee scaling based on market congestion, Jupiter price caching, and swap order retries with dynamic slippage increments.
+- **Jito Bundle Tests**: Verifies Block Engine tip floor queries, confirmation status polling, and bundle retry logic.
+
+### 7. ML & Adaptive Learning
+
+- **ML Tests**: Tests feature extraction, scoring model lifecycles, gradient parameter optimizers, and cold-start gating.
+- **Ghost Trader Tests**: Covers the ghost position lifecycle — candidate queuing, exit triggers, label assignment, and retrain cadence.
+- **RL & Ensemble Tests**: Validate reinforcement learning exit policies (bounded/ordered output, weight round-trips, reward improvement) and per-pool ensemble routing with general-model fallback.
+- **Backtest Tests**: Validates walk-forward backtesters — chronological train/test splitting, statistical evaluation metrics, and shuffle controls.
+- **Geyser & Fee Manager Tests**: Cover Geyser parser details and probabilistic MEV tip configurations.
+
+### 8. End-to-End Simulation & UI Refresh Orchestration
+
+- **Services Tests**: Simulates complete transaction loops including mock paper trades, dry-runs for live swaps, and database persistence verification.
+- **Orchestration Tests**: Tests boot processes, error rate backpressure thresholds, automatic worker parallelism adjustments, and graceful process signals lifecycle termination.
+- **TUI Tests**: Verifies terminal UI event loops, dashboard data rendering refresh cycles, and user input throttles.
+
+### Test Orchestration Sandbox
+
+- **Test Helpers**: Provides the core testing sandbox. Mocks HTTP RPC configurations, registers mock websocket channels, overrides fetch networks, and instantiates standardized mock configurations to ensure tests run fast and isolated without performing active external network calls.
 
 ```bash
-# Run all modular tests
+# Execute the full testing suite
 npm test
 
-# Run dynamic syntax verification on all JS files
-npm run check
-
-# Verify coding guidelines using strict linter
-npm run lint
-
-# Validate Prettier formatting
-npm run format:check
-
-# Format all files in-place using Prettier
-npm run format
-
-# Run complete CI validation pipeline (audit -> check -> lint -> format:check -> test)
-npm run ci
+# Run tests with experimental test coverage metrics
+node --import tsx --test --experimental-test-coverage tests/*.test.ts
 ```
 
 ---
-
-## Configuration Optimization (`node analyze.js`)
-
-To optimize the exit strategy parameters of your trading engine, Veloci-Buy includes a post-session **Trade Replay Analyzer** ([analyze.js](analyze.js)). This tool acts as a local parameter optimizer, backtesting historical trading journals across thousands of strategy permutations to isolate the highest-performing configurations.
-
-### How It Works
-
-1. **Trade Replay Ingestion**: The optimizer scans `logs/paper-trading/` to reconstruct complete historical trades from session journals (`paper-trade-journal.jsonl`, `trade-journal.jsonl`, and `metrics.json`).
-2. **Synthetic Price Path Reconstruction**: Since full ticks can be storage-heavy, the engine reconstructs a synthetic price curve for each trade (`entryPriceUsd` → `highestPriceUsd` → `actualExitPrice`) mapped against the actual trade duration.
-3. **Multi-Parameter Grid Search**: It replays each trade through a 7-parameter grid mapping **9,216 distinct exit rule configurations**:
-   - `stopLossPct`: `[0.1, 0.15, 0.2, 0.25]` (10% to 25% Stop Loss)
-   - `trailingDrawdownPct`: `[0.1, 0.15, 0.2, 0.25]` (Trailing Drawdown exit buffer)
-   - `takeProfitMultiples`: `[[1.5], [1.3, 2.0], [1.5, 2.5]]` (1 target, 2 targets, etc.)
-   - `takeProfitFraction`: `[0.5, 0.6, 0.75]` (What percentage of position to sell at each target)
-   - `earlyPerformanceDropPct`: `[5, 10, 15, 20]` (Trigger for early performance guard)
-   - `earlyPerformanceSellPct`: `[40, 60, 80, 100]` (Fraction to exit early if stalling)
-   - `maxHoldMinutes`: `[10, 20, 30, 60]` (Maximum time-based hold durations)
-4. **Calculated Metrics**: Each configuration combo is ranked based on:
-   - **Win Rate (%)**
-   - **Profit Factor** (Gross profit divided by gross loss)
-   - **Average PnL per trade**
-   - **Max Drawdown** (Maximum single trade loss)
-   - **Total PnL** (Overall profitability)
-
-### Usage
-
-Replay and optimize your historical paper trading configurations by running:
-
-```bash
-node analyze.js
-```
-
-The console will display the overall sessions ingested, total trades, grid combos processed, and output the **top 10 configurations** ranked by profit factor and overall PnL, highlighting exactly which parameter values to adjust in your strategy config.
-
----
-
-## PnL & Gross Profit Reporting (`npm run analyze-pnl`)
-
-Veloci-Buy includes a dedicated **PnL Analyzer** utility to generate "legally correct" and audit-ready reports for every trading session. This feature ensures high-fidelity tracking of both USD and SOL-denominated profits and losses.
-
-### Features
-
-- **SOL & USD Denomination**: Full visibility into profits and losses in both native SOL and USD.
-- **Gross Profit & Lost Value**: Explicitly calculates the sum of all winning and losing trades.
-- **Detailed Transaction History**: Generates a timestamped table of every buy and sell event, including entry prices, exit prices, and realized PnL.
-- **Legal Compliance**: Provides a structured Markdown report (`pnl-report.md`) within the session log folder, suitable for tax and audit purposes.
-
-### Usage
-
-To generate a report for a specific session:
-
-```bash
-npm run analyze-pnl logs/paper-trading/(session timestamp)
-```
-
----
-
-## v2.x Changelog
-
-### PnL Analyzer & Legal Reporting
-
-- **PnL & Gross Profit Analyzer**: Introduced a new reporting engine that calculates Gross Profit, Lost Value, and Net PnL in both SOL and USD.
-- **Enhanced Financial Tracking**: Modified the core trading pipeline to record explicit SOL-denominated proceeds and prices at the time of execution.
-- **Audit-Ready Reports**: Automated generation of `pnl-report.md` for post-session analysis and legal compliance.
-
-### Persistence Resilience & Class-Based Refactor
-
-- **Class-Based Orchestration**: Refactored the main entry point into a unified `VelociBuyBot` class, eliminating module-level globals and improving modularity and testability.
-- **Resilient State Persistence**: Implemented a mandatory `flush()` mechanism in `StateStore` to ensure all pending state changes are committed to disk during shutdowns.
-- **Enhanced Audit Reliability**: Added exponential backoff and retry logic for security audits to handle RPC indexing lag when verifying token holder concentration.
-- **Persistent Trade History**: Transitioned trade statistics to an append-only `trades.jsonl` format, preserving the complete history of all trades across multiple sessions.
-
-### Type Hardening & Migration Finalization
-
-- **Complete TypeScript Transition**: Migrated the final major logic block, `analyze.js` (Post-Session Optimizer), to `src/core/analyze.ts` with full type safety for trade replays and grid search.
-- **Comprehensive Type Hardening**: Hardened over 50 core interfaces (`Position`, `Context`, `State`, `SwapOrder`) and audit signal structures. Removed dozens of `any` casts and intersection types across all services (`monitor`, `trading`, `scanner`, `audit`).
-- **Strict Data Contracts**: Established formal interfaces for financial transactions and security signals, ensuring compile-time verification of the entire trading pipeline.
-- **Architectural Cleanup**: Formalized the `StateStore` interface to resolve circular dependencies while maintaining strict typing for the global context.
-
-### TypeScript Migration & Code Quality Overhaul
-
-- **Full TypeScript Migration**: Ported codebase to TypeScript with strict validation flags enabled (`strict: true`, `noImplicitAny: true`). Established central type declarations in [src/types/index.ts](src/types/index.ts).
-- **Decoupled Layout**: Reorganized core codebase into a `src/` directory layout separated into `core` and `services`.
-- **Backward-Compatible Wrappers**: Built backwards-compatible CommonJS exports resolving to the compiled `dist/` directory outputs, allowing legacy CJS scripts and modular test suites to run unmodified.
-- **Prettier & ESLint Guardrails**: Re-configured ESLint flat config with global ignores for compiled and artifact paths. Formatted codebase using Prettier rules.
-
-### Performance, Quant Strategy & Parameter Optimization
-
-- **Quant Strategy Upgrades**: Added **Global Momentum Index (GMI)** market filter, **Volatility-Adaptive Risk** scaling Stop-Loss, **Accelerated Trailing Stop**, **Insider Drift Tracking** de-risk sold positions on large dumps, and **Spread Velocity Widened Exits**. Decommissioned legacy backtester.
-- **Post-Session Parameter Optimizer**: Created `analyze.js` trade replay analyzer to run 9,216 strategy combo backtests over JSONL journals. Enriched trade logs with 18 fields.
-- **Sub-Second Discovery**: Direct log parsing for Pump.fun log events, bypassing indexing RPC delays.
-- **Batch Audits & RPC Health**: Consolidated audits using `getMultipleAccounts` and added unified RPC failover health trackers.
-- **API Circuit Breakers**: Built local on-chain heuristic fallbacks for GoPlus/BubbleMaps outages.
-- **Decoupled Orchestration**: Split scanner and audit scheduling logic from core watchdog loops.
-
----
-
-_Developed with focus on speed and safety._

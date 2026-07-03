@@ -1,4 +1,4 @@
-import { address } from '@solana/addresses';
+﻿import { address } from '@solana/addresses';
 import {
   sleep,
   rpcCall,
@@ -6,8 +6,8 @@ import {
   ratioToPercentString,
   bigintRatioToNumber,
   runBoundedPool,
-} from '../../core/utils.js';
-import { Context, MintSignals, GoPlusTokenSignals, BubbleMapsSignals } from '../../types/index.js';
+} from '#core/utils.js';
+import { Context, MintSignals, RugCheckSignals, BubbleMapsSignals } from '#types/index.js';
 
 interface ParsedMintInfo {
   decimals: number;
@@ -28,6 +28,7 @@ interface ParsedData {
 
 /**
  * Checks if a value represents a truthy flag in the context of security API responses.
+ * Handles strings like '0', 'false', 'none', and 'no' as falsy.
  * @param value - The value to check.
  * @returns True if the value is considered truthy.
  */
@@ -38,6 +39,11 @@ export function isTruthyFlag(value: unknown): boolean {
   return !['0', 'false', 'null', 'none', 'no'].includes(normalized);
 }
 
+/**
+ * Extracts a human-readable error message from various error types.
+ * @param error - The error object or message.
+ * @returns A string representation of the error.
+ */
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;
@@ -49,7 +55,14 @@ function getErrorMessage(error: unknown): string {
 }
 
 /**
- * Fetches mint-level signals from the Solana RPC, including supply, authorities, and top holder concentration.
+ * Fetches mint-level signals from the Solana RPC.
+ * Includes total supply, mint/freeze authorities, and top holder concentration.
+ * Incorporates retry logic to account for RPC indexing lag on newly created tokens.
+ *
+ * @param ctx - The application context.
+ * @param mint - The token mint address.
+ * @param options - Options including RPC priority.
+ * @returns A promise resolving to MintSignals.
  */
 export async function getMintSignals(
   ctx: Context,
@@ -163,6 +176,7 @@ export async function getMintSignals(
   });
 
   const top1Share = topAccounts[0]?.share || 0;
+  const top3Share = topAccounts.slice(0, 3).reduce((sum: number, a) => sum + a.share, 0);
   const top5Share = topAccounts
     .slice(0, 5)
     .reduce((sum: number, account) => sum + account.share, 0);
@@ -217,156 +231,121 @@ export async function getMintSignals(
     mintAuthority: mintInfo.mintAuthority || null,
     freezeAuthority: mintInfo.freezeAuthority || null,
     top1Share,
+    top3Share,
     top5Share,
     topAccounts: ownerDetails,
   };
 }
 
+interface RugCheckRisk {
+  name: string;
+  level: 'danger' | 'warn' | string;
+}
+
+interface RugCheckReport {
+  score_normalised?: number;
+  risks?: RugCheckRisk[];
+  rugged?: boolean;
+}
+
 /**
- * Fetches token security signals from GoPlus.
+ * Fetches token security signals from RugCheck.xyz.
+ * Covers mint/freeze authority, honeypot detection, behavioral flags, and risk scoring.
+ * Requires RUGCHECK_API_KEY (free tier: 60 req/min with key, 10 req/min without).
  */
-export async function fetchGoPlusTokenSignals(
-  ctx: Context,
-  mint: string
-): Promise<GoPlusTokenSignals | null> {
-  if (!ctx.config.goPlusAccessToken) return null;
-  const timeoutMs = 8000;
+export async function fetchRugCheckSignals(ctx: Context, mint: string): Promise<RugCheckSignals> {
+  const timeoutMs = 6000;
+  const headers: Record<string, string> = ctx.config.rugcheckApiKey
+    ? { Authorization: `Bearer ${ctx.config.rugcheckApiKey}` }
+    : {};
   try {
-    const url = `${ctx.config.goPlusBaseUrl}/solana/token_security?contract_addresses=${encodeURIComponent(mint)}`;
-    const payload = (await fetchJson(url, {
-      headers: { Authorization: `Bearer ${ctx.config.goPlusAccessToken}` },
-      timeoutMs,
-    })) as {
-      result?: Record<string, Record<string, unknown>>;
-      data?: Record<string, Record<string, unknown>>;
-    };
-    const record =
-      payload?.result?.[mint] ||
-      payload?.result?.[mint.toLowerCase()] ||
-      payload?.data?.[mint] ||
-      payload?.data?.[mint.toLowerCase()] ||
-      null;
-    if (!record) return { status: 'no_data', blockers: [], notes: [] };
+    const url = `${ctx.config.rugcheckBaseUrl}/tokens/${mint}/report`;
+    const payload = (await fetchJson(url, { headers, timeoutMs })) as RugCheckReport;
 
     const blockers: string[] = [];
     const notes: string[] = [];
-    if (isTruthyFlag(record.is_mintable)) blockers.push('GoPlus reports token is mintable');
-    if (isTruthyFlag(record.is_freezable)) blockers.push('GoPlus reports token is freezable');
-    if (isTruthyFlag(record.transfer_fee_upgradable))
-      notes.push('GoPlus reports transfer fee is upgradable');
-    if (isTruthyFlag(record.non_transferable))
-      blockers.push('GoPlus reports token is non-transferable');
-    if (isTruthyFlag(record.default_account_state))
-      notes.push('GoPlus reports custom default account state');
-    if (isTruthyFlag(record.trusted_token) === false && record.trusted_token !== undefined)
-      notes.push('GoPlus does not mark the token as trusted');
 
-    return { status: 'ok', blockers, notes, raw: record };
+    if (payload.rugged) {
+      blockers.push('RugCheck: token previously rugged.');
+    }
+
+    for (const risk of payload.risks ?? []) {
+      if (risk.level === 'danger') {
+        blockers.push(`RugCheck: ${risk.name}`);
+      } else if (risk.level === 'warn') {
+        notes.push(`RugCheck warn: ${risk.name}`);
+      }
+    }
+
+    const riskScore = payload.score_normalised ?? null;
+    if (riskScore != null) notes.push(`RugCheck score: ${riskScore}`);
+
+    return { status: 'ok', blockers, notes, riskScore, rugged: payload.rugged ?? false };
   } catch (e: unknown) {
     const message = getErrorMessage(e);
-    const status = message.includes('timed out') ? 'timeout' : 'error';
-    ctx.logger(`GoPlus token security skipped for ${mint} (${status}): ${message}`, 'warn');
-    return { status, blockers: [], notes: [], error: message };
+    ctx.logger(`RugCheck fetch failed for ${mint}: ${message}`, 'warn');
+    return {
+      status: 'error',
+      blockers: [],
+      notes: [],
+      riskScore: null,
+      rugged: false,
+      error: message,
+    };
   }
 }
 
 /**
- * Fetches address security signals from GoPlus for a batch of addresses.
- * @param ctx - The application context.
- * @param addresses - Array of addresses to check.
- * @returns Array of malicious address records found.
+ * Checks a batch of wallet addresses against RugCheck's wallet risk endpoint.
+ * Returns the subset flagged as high-risk.
  */
-export async function fetchGoPlusAddressSignals(
+export async function fetchRugCheckWalletSignals(
   ctx: Context,
   addresses: string[]
-): Promise<Array<{ address: string; record: Record<string, unknown> }>> {
-  if (!ctx.config.goPlusAccessToken) return [];
-  const startedAt = Date.now();
+): Promise<string[]> {
+  if (addresses.length === 0) return [];
+  const headers: Record<string, string> = ctx.config.rugcheckApiKey
+    ? { Authorization: `Bearer ${ctx.config.rugcheckApiKey}` }
+    : {};
   const results = await runBoundedPool(
     addresses,
     async (addr) => {
       try {
-        const url = `${ctx.config.goPlusBaseUrl}/address_security/${addr}?chain_id=solana`;
-        const payload = (await fetchJson(url, {
-          headers: { Authorization: `Bearer ${ctx.config.goPlusAccessToken}` },
-          timeoutMs: 5000,
-        })) as { result?: Record<string, unknown>; data?: Record<string, unknown> };
-        const resultRecord = payload?.result;
-        const dataRecord = payload?.data;
-        const record =
-          (resultRecord?.[addr] as Record<string, unknown> | undefined) ||
-          (resultRecord?.[addr.toLowerCase()] as Record<string, unknown> | undefined) ||
-          (dataRecord?.[addr] as Record<string, unknown> | undefined) ||
-          (dataRecord?.[addr.toLowerCase()] as Record<string, unknown> | undefined) ||
-          (resultRecord && !Array.isArray(resultRecord)
-            ? (resultRecord as Record<string, unknown>)
-            : null) ||
-          (dataRecord && !Array.isArray(dataRecord)
-            ? (dataRecord as Record<string, unknown>)
-            : null);
-        if (record && isMaliciousGoPlusAddressRecord(record)) return { address: addr, record };
-      } catch (e) {
-        ctx.logger(`GoPlus address security skipped for ${addr}: ${getErrorMessage(e)}`, 'warn');
+        const url = `${ctx.config.rugcheckBaseUrl}/wallet/${addr}/risk`;
+        const payload = (await fetchJson(url, { headers, timeoutMs: 3000 })) as {
+          riskLevel?: string;
+        };
+        return payload.riskLevel === 'high' ? addr : null;
+      } catch {
+        return null;
       }
-      return null;
     },
-    { concurrency: ctx.config.ownerAuditParallelism || 1 }
-  );
-  ctx.logger(
-    `GoPlus owner checks completed: count=${addresses.length}, concurrency=${ctx.config.ownerAuditParallelism || 1}, ownerCheckMs=${Date.now() - startedAt}`,
-    'debug',
-    { console: false }
+    { concurrency: ctx.config.ownerAuditParallelism || 2 }
   );
   return results
-    .filter((result) => result.status === 'fulfilled' && result.value)
-    .map((result) => result.value as { address: string; record: Record<string, unknown> });
-}
-
-/**
- * Determines if a GoPlus address record indicates malicious activity.
- * @param record - The GoPlus address security record.
- * @returns True if malicious signals are found.
- */
-function isMaliciousGoPlusAddressRecord(record: Record<string, unknown>): boolean {
-  const maliciousFields = [
-    'malicious_address',
-    'phishing_activities',
-    'fake_token',
-    'blackmail_activities',
-    'honeypot_related_address',
-    'blacklist_doubt',
-    'stealing_attack',
-    'fake_kyc',
-    'malicious_mining_activities',
-    'darkweb_transactions',
-    'cybercrime',
-    'money_laundering',
-    'financial_crime',
-    'mixer',
-    'scam',
-    'sanctioned',
-    'gas_abuse',
-    'reinit',
-    'fake_standard_interface',
-  ];
-  const maliciousBehaviors = Array.isArray(record.malicious_behavior)
-    ? (record.malicious_behavior as string[])
-    : [];
-
-  return (
-    maliciousFields.some((field) => isTruthyFlag(record[field])) ||
-    maliciousBehaviors.some((field) => maliciousFields.includes(String(field)))
-  );
+    .filter((r) => r.status === 'fulfilled' && r.value !== null)
+    .map((r) => r.value as string);
 }
 
 /**
  * Fetches decentralization and cluster signals from BubbleMaps.
+ * Identifies large holder clusters and decentralization scores.
+ *
+ * @param ctx - The application context.
+ * @param mint - The token mint address.
+ * @returns A promise resolving to BubbleMapsSignals or null if API key is missing.
  */
 export async function fetchBubbleMapsSignals(
   ctx: Context,
-  mint: string
+  mint: string,
+  opts?: { isTrending?: boolean }
 ): Promise<BubbleMapsSignals | null> {
   if (!ctx.config.bubbleMapsApiKey) return null;
+  // Trending coins get a moderately lower decentralization-score floor (cluster share is
+  // left at the standard threshold, since heavy clustering is a hard rug signal).
+  const minScore = opts?.isTrending
+    ? ctx.config.trendingMinBubbleMapsScore
+    : ctx.config.minBubbleMapsScore;
   const timeoutMs = 12000;
   try {
     const params = new URLSearchParams({
@@ -387,10 +366,10 @@ export async function fetchBubbleMapsSignals(
     const blockers: string[] = [];
     if (
       payload?.decentralization_score != null &&
-      Number(payload.decentralization_score) < ctx.config.minBubbleMapsScore
+      Number(payload.decentralization_score) < minScore
     ) {
       blockers.push(
-        `BubbleMaps decentralization score ${payload.decentralization_score} is below ${ctx.config.minBubbleMapsScore}`
+        `BubbleMaps decentralization score ${payload.decentralization_score} is below ${minScore}`
       );
     }
     if (
@@ -414,4 +393,188 @@ export async function fetchBubbleMapsSignals(
     ctx.logger(`BubbleMaps skipped for ${mint} (${status}): ${message}`, 'warn');
     return { status, blockers: [], score: null, largestClusterShare: null, error: message };
   }
+}
+
+/**
+ * Service object to allow for easier mocking in ESM environments.
+ */
+export const auditService = {
+  getMintSignals,
+  batchGetMintSignals,
+  fetchRugCheckSignals,
+  fetchRugCheckWalletSignals,
+  fetchBubbleMapsSignals,
+};
+
+/**
+ * Fetches mint-level signals for a batch of token mints.
+ * Optimizes RPC usage by batching mint metadata and owner lookups using getMultipleAccounts.
+ *
+ * @param ctx - The application context.
+ * @param mints - Array of token mint addresses.
+ * @param options - Options including RPC priority.
+ * @returns A promise resolving to a Map of mint address to MintSignals.
+ */
+export async function batchGetMintSignals(
+  ctx: Context,
+  mints: string[],
+  options: { priority?: number } = {}
+): Promise<Map<string, MintSignals>> {
+  if (mints.length === 0) return new Map();
+
+  const priority = options.priority;
+  const uniqueMints = Array.from(new Set(mints));
+  const mintAddresses = uniqueMints.map((m) => address(m));
+  const maxAttempts = Math.max(1, Math.floor(Number(ctx.config.mintSignalMaxAttempts || 3)));
+  const retryDelayMs = Math.max(1, Math.floor(Number(ctx.config.mintSignalRetryDelayMs || 750)));
+
+  // Step 1: Batch fetch mint metadata
+  let mintsData: { value: Array<{ data: unknown } | null> } | null = null;
+  let attempts = 0;
+  while (attempts < maxAttempts) {
+    try {
+      mintsData = (await rpcCall(
+        ctx,
+        'getMultipleAccounts',
+        [
+          mintAddresses,
+          {
+            encoding: 'jsonParsed',
+            commitment: 'confirmed',
+          },
+        ],
+        { priority }
+      )) as { value: Array<{ data: unknown } | null> };
+      if (mintsData?.value) break;
+    } catch (e) {
+      if (attempts === maxAttempts - 1) throw e;
+    }
+    attempts++;
+    if (attempts < maxAttempts) await sleep(retryDelayMs * attempts);
+  }
+
+  const results = new Map<string, MintSignals>();
+  const validMints: { mint: string; info: ParsedMintInfo }[] = [];
+
+  mintsData?.value.forEach((val, idx) => {
+    const mint = uniqueMints[idx]!;
+    if (val && typeof val.data === 'object' && val.data !== null && 'parsed' in val.data) {
+      const data = val.data as ParsedData;
+      const info = data.parsed?.info || (data.parsed as unknown as ParsedAccountInfo).info;
+      if (info && (data.parsed?.type === 'mint' || data.parsed?.info?.type === 'mint')) {
+        validMints.push({ mint, info });
+      }
+    }
+  });
+
+  if (validMints.length === 0) return results;
+
+  // Step 2: Fetch largest accounts for all valid mints in parallel
+  const largestAccountsMap = new Map<string, { address: string; amount: string }[]>();
+  await runBoundedPool(
+    validMints,
+    async ({ mint }) => {
+      let lAttempts = 0;
+      while (lAttempts < maxAttempts) {
+        try {
+          const resp = (await rpcCall(
+            ctx,
+            'getTokenLargestAccounts',
+            [address(mint), { commitment: 'confirmed' }],
+            { priority }
+          )) as unknown as { value: Array<{ address: string; amount: string }> };
+          if (resp?.value) {
+            largestAccountsMap.set(mint, resp.value);
+            break;
+          }
+        } catch (e) {
+          if (lAttempts === maxAttempts - 1) {
+            ctx.logger(`Failed to get largest accounts for ${mint}: ${getErrorMessage(e)}`, 'warn');
+          }
+        }
+        lAttempts++;
+        if (lAttempts < maxAttempts) await sleep(retryDelayMs * lAttempts);
+      }
+    },
+    { concurrency: ctx.config.ownerAuditParallelism || 5 }
+  );
+
+  // Step 3: Collect all unique holder addresses for owner lookups
+  const allHolders = new Set<string>();
+  const mintToHolders = new Map<string, { address: string; rawAmount: bigint; share: number }[]>();
+
+  for (const { mint, info } of validMints) {
+    const holdersRaw = largestAccountsMap.get(mint) || [];
+    const supplyRaw = BigInt(info.supply || '0');
+    const holders = holdersRaw.slice(0, 5).map((h) => {
+      const rawAmount = BigInt(h.amount || '0');
+      allHolders.add(h.address);
+      return {
+        address: h.address,
+        rawAmount,
+        share: bigintRatioToNumber(rawAmount, supplyRaw),
+      };
+    });
+    mintToHolders.set(mint, holders);
+  }
+
+  // Step 4: Batch fetch owner info for all identified holders
+  const holderAddresses = Array.from(allHolders).map((h) => address(h));
+  const ownerMap = new Map<string, string | null>();
+
+  // Split into chunks of 100 if necessary
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < holderAddresses.length; i += CHUNK_SIZE) {
+    const chunk = holderAddresses.slice(i, i + CHUNK_SIZE);
+    let oAttempts = 0;
+    while (oAttempts < maxAttempts) {
+      try {
+        const ownersInfo = (await rpcCall(
+          ctx,
+          'getMultipleAccounts',
+          [chunk, { encoding: 'jsonParsed', commitment: 'confirmed' }],
+          { priority, cacheTtlMs: 10000 }
+        )) as { value: Array<{ data: unknown } | null> };
+
+        ownersInfo?.value.forEach((val, idx) => {
+          const holderAddr = chunk[idx]!;
+          if (val && val.data && typeof val.data === 'object' && 'parsed' in val.data) {
+            const parsedData = val.data as { parsed?: { info?: { owner?: string } } };
+            ownerMap.set(holderAddr, parsedData.parsed?.info?.owner || null);
+          } else {
+            ownerMap.set(holderAddr, null);
+          }
+        });
+        break;
+      } catch (e) {
+        if (oAttempts === maxAttempts - 1) {
+          ctx.logger(`Batch owner lookup failed: ${getErrorMessage(e)}`, 'warn');
+        }
+      }
+      oAttempts++;
+      if (oAttempts < maxAttempts) await sleep(retryDelayMs * oAttempts);
+    }
+  }
+
+  // Step 5: Finalize results
+  for (const { mint, info } of validMints) {
+    const holders = mintToHolders.get(mint) || [];
+    const topAccounts = holders.map((h) => ({
+      ...h,
+      owner: ownerMap.get(h.address) || null,
+    }));
+
+    results.set(mint, {
+      decimals: Number(info.decimals || 0),
+      supplyRaw: BigInt(info.supply || '0'),
+      mintAuthority: info.mintAuthority || null,
+      freezeAuthority: info.freezeAuthority || null,
+      top1Share: topAccounts[0]?.share || 0,
+      top3Share: topAccounts.slice(0, 3).reduce((sum, h) => sum + h.share, 0),
+      top5Share: topAccounts.reduce((sum, h) => sum + h.share, 0),
+      topAccounts,
+    });
+  }
+
+  return results;
 }

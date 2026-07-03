@@ -1,0 +1,17 @@
+# Build outputs
+dist/
+coverage/
+.test-artifacts/
+node_modules/
+
+# Native Rust addon: generated bindings + dev smoke test (built out-of-band)
+rust-ml-core/
+
+# Solana Geyser plugin: Rust crate + deploy docs (built on a validator)
+geyser-plugin/
+
+# Planning docs (free-form markdown)
+plans/
+
+# Multi-agent coordination scratch (ephemeral, not committed)
+.agents/

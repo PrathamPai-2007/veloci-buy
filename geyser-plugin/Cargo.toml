@@ -1,0 +1,28 @@
+# Solana Geyser plugin for veloci-buy.
+#
+# NOTE: This crate is built and deployed ON A VALIDATOR, not as part of the
+# Node.js bot. It is intentionally excluded from the normal `npm` build. Building
+# it requires the Agave/Solana validator's plugin interface crate, whose version
+# MUST match the validator you run. Pin `agave-geyser-plugin-interface` to your
+# validator's release (e.g. 2.x) before `cargo build --release`.
+[package]
+name = "veloci-geyser-plugin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+# Validators load the plugin as a dynamic library.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pin this to match your validator release. Kept loose here because the crate is
+# not built in CI; the deploying operator selects the exact version.
+agave-geyser-plugin-interface = "2"
+solana-program = "2"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+bs58 = "0.5.1"
+crossbeam-channel = "0.5.15"
+borsh = "1.6.1"

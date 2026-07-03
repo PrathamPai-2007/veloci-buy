@@ -1,0 +1,13 @@
+{
+  // Production build config. Compiles ONLY src with rootDir=src so the output is
+  // dist/index.js (matching package.json "main" and "start:prod"), instead of the
+  // nested dist/src/index.js the all-inclusive base config produced. Tests and
+  // scripts are intentionally excluded from the shipped build; they are still
+  // type-checked by `npm run typecheck` (the base tsconfig) and run via tsx.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", ".test-artifacts", "tests", "scripts"]
+}
