@@ -32,7 +32,6 @@ errorRateWindow: 30
 backpressureErrorRateThreshold: 0.22
 mintSignalMaxAttempts: 2
 mintSignalRetryDelayMs: 500
-rpcIndexingRetryDelayMs: 5000
 
 # --- Entry gates ---
 minLiquidityUsd: 300
@@ -93,8 +92,6 @@ maxRecheckAttempts: 2
 recheckPriceDropPct: 15
 borderlineRecheckEnabled: true
 borderlineRecheckMinDelayMs: 2
-borderlineRecheckMaxDelayMs: 20000
-borderlineRecheckMaxAttempts: 6
 borderlineThresholdBufferRatio: 0.2
 holderCountWaitlistSeconds: 33
 reentryDipPct: 15
@@ -112,7 +109,6 @@ trendingMinBubbleMapsScore: 40
 # --- Sizing & execution ---
 maxOpenPositions: 5
 maxBuysPerScan: 2
-maxCandidatesPerScan: 9
 maxPositionsPerLaunchpad: 3
 maxBuyLiquidityFraction: 0.15
 slippageBps: 500
@@ -121,7 +117,6 @@ autoSlippageIncrementBps: 100
 inlineSwapSimulation: true
 backgroundAtaClose: true
 enableLocalRouting: true
-localRoutingComputeUnitLimit: 100000
 dynamicSizingEnabled: false
 kellyEnabled: false
 maxKellyFraction: 0.25
@@ -146,11 +141,9 @@ takeProfitMultiplesHigh: [1.24, 2]
 takeProfitFractions: [0.75, 0.6]
 takeProfitFraction: 0.6
 highGrowthConfidenceScore: 80
-standardGrowthConfidenceScore: 70
 maxHoldMinutes: 20
 timeExitMinMultiple: 1.25
 holdDurationHighConfidenceMinutes: 30
-holdDurationLowConfidenceMinutes: 5
 minHoldTimeSeconds: 1
 moonBagFraction: 0.1
 moonBagTrailingDrawdownPct: 0.3
@@ -175,7 +168,6 @@ midStopLossWindowSec: 120
 earlyPerformanceGuardSeconds: 60
 earlyPerformanceDropPct: 10
 earlyPerformanceSellPct: 50
-buyingTheTopSlPct: 25
 buyTopAthBufferPct: 2
 maxBuyTopGrowthPct: 70
 

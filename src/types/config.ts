@@ -64,10 +64,8 @@ export interface Config {
   backpressureErrorRateThreshold: number;
   mintSignalMaxAttempts: number;
   mintSignalRetryDelayMs: number;
-  rpcIndexingRetryDelayMs: number;
   maxOpenPositions: number;
   maxBuysPerScan: number;
-  maxCandidatesPerScan: number;
   dryRun: boolean;
   paperTrading: boolean;
   liveTradingEnabled: boolean;
@@ -126,12 +124,9 @@ export interface Config {
   minMomentumConsistency: number;
   maxExhaustionRangePct: number;
   highGrowthConfidenceScore: number;
-  standardGrowthConfidenceScore: number;
   borderlineRecheckEnabled: boolean;
   borderlineRecheckMinDelayMs: number;
   borderlineRecheckPageDelayMs?: number;
-  borderlineRecheckMaxDelayMs: number;
-  borderlineRecheckMaxAttempts: number;
   borderlineThresholdBufferRatio: number;
   survivalDelaySeconds: number;
   survivalDelayThresholdHigh: number;
@@ -143,7 +138,6 @@ export interface Config {
   maxLiquidityDrawdownPct: number;
   maxBuyTopGrowthPct: number;
   buyTopAthBufferPct: number;
-  buyingTheTopSlPct: number;
   performanceCheckSeconds: number;
   performanceMinMomentum: number;
   minHoldTimeSeconds: number;
@@ -190,7 +184,6 @@ export interface Config {
   liquidityCollapseThresholdUsd: number;
   liquidityCollapseThresholdRatio: number;
   holdDurationHighConfidenceMinutes: number;
-  holdDurationLowConfidenceMinutes: number;
   recheckPriceDropPct: number;
   moodPauseDurationMinutes: number;
   coolDownMinutes: number;
@@ -255,7 +248,6 @@ export interface Config {
   rugcheckEnabled: boolean;
   bubblemapsEnabled: boolean;
   enableLocalRouting: boolean;
-  localRoutingComputeUnitLimit: number;
   kellyEnabled: boolean;
   maxKellyFraction: number;
   kellyMinTrades: number;

@@ -188,8 +188,6 @@ All keys and defaults in `strategies/standard.yaml`, in file order. Units:
 - Ratios are fractions (e.g. `0.15` = 15%).
 - `*Ms` keys are milliseconds; `*Seconds`, `*Sec` and `*Minutes` keys use the unit in their name.
 
-Keys marked **Not currently read by the code** are accepted and validated, but nothing uses them.
-
 ### Loop cadence & discovery
 
 | Key                           | Default | Meaning                                                                                                                            |
@@ -223,7 +221,6 @@ Keys marked **Not currently read by the code** are accepted and validated, but n
 | `backpressureErrorRateThreshold` | `0.22`  | RPC error rate (0-1) above which scan parallelism is scaled down by `parallelismMinFactor`.                                                              |
 | `mintSignalMaxAttempts`          | `2`     | Attempts to read a mint account and its holders (absorbs RPC indexing lag). This is the only retry budget for those reads. Forced to 1 on free-tier RPC. |
 | `mintSignalRetryDelayMs`         | `500`   | Base delay between mint-signal attempts (multiplied by the attempt number).                                                                              |
-| `rpcIndexingRetryDelayMs`        | `5000`  | **Not currently read by the code.**                                                                                                                      |
 
 ### Entry gates
 
@@ -271,8 +268,6 @@ Keys marked **Not currently read by the code** are accepted and validated, but n
 | `recheckPriceDropPct`            | `15`    | Drop a recheck entry if price fell more than this (%) from its high.                                         |
 | `borderlineRecheckEnabled`       | `true`  | Recheck candidates that miss the score gate by a small margin.                                               |
 | `borderlineRecheckMinDelayMs`    | `2`     | Delay before a borderline or waitlist recheck.                                                               |
-| `borderlineRecheckMaxDelayMs`    | `20000` | **Not currently read by the code.**                                                                          |
-| `borderlineRecheckMaxAttempts`   | `6`     | **Not currently read by the code.**                                                                          |
 | `borderlineThresholdBufferRatio` | `0.2`   | How close to the gate (ratio) a score must be to count as borderline.                                        |
 | `holderCountWaitlistSeconds`     | `33`    | Waitlist delay for tokens below `minHolderCount`.                                                            |
 | `reentryDipPct`                  | `15`    | Re-entering a previously traded mint is blocked unless price dipped more than this (%) from the last exit... |
@@ -292,24 +287,22 @@ Keys marked **Not currently read by the code** are accepted and validated, but n
 
 ### Sizing & execution
 
-| Key                            | Default  | Meaning                                                                          |
-| ------------------------------ | -------- | -------------------------------------------------------------------------------- |
-| `maxOpenPositions`             | `5`      | Maximum concurrent open positions.                                               |
-| `maxBuysPerScan`               | `2`      | Maximum buys per scan cycle.                                                     |
-| `maxCandidatesPerScan`         | `9`      | **Not currently read by the code.**                                              |
-| `maxPositionsPerLaunchpad`     | `3`      | Maximum concurrent positions from one launchpad.                                 |
-| `maxBuyLiquidityFraction`      | `0.15`   | Veto buys larger than this fraction of pool liquidity.                           |
-| `slippageBps`                  | `500`    | Base swap slippage (basis points).                                               |
-| `maxAutoSlippageRetry`         | `3`      | Retries with more slippage after a slippage failure.                             |
-| `autoSlippageIncrementBps`     | `100`    | Slippage added per auto-slippage retry (bps).                                    |
-| `inlineSwapSimulation`         | `true`   | Simulate swaps before sending them.                                              |
-| `backgroundAtaClose`           | `true`   | Close emptied token accounts in the background after full exits (reclaims rent). |
-| `enableLocalRouting`           | `true`   | Allow direct pump.fun / Raydium / Meteora routing without Jupiter.               |
-| `localRoutingComputeUnitLimit` | `100000` | **Not currently read by the code.**                                              |
-| `dynamicSizingEnabled`         | `false`  | Scale position size with recent performance.                                     |
-| `kellyEnabled`                 | `false`  | Use Kelly-fraction sizing once enough trades exist.                              |
-| `maxKellyFraction`             | `0.25`   | Cap on the Kelly fraction.                                                       |
-| `kellyMinTrades`               | `10`     | Closed trades required before Kelly sizing applies.                              |
+| Key                        | Default | Meaning                                                                          |
+| -------------------------- | ------- | -------------------------------------------------------------------------------- |
+| `maxOpenPositions`         | `5`     | Maximum concurrent open positions.                                               |
+| `maxBuysPerScan`           | `2`     | Maximum buys per scan cycle.                                                     |
+| `maxPositionsPerLaunchpad` | `3`     | Maximum concurrent positions from one launchpad.                                 |
+| `maxBuyLiquidityFraction`  | `0.15`  | Veto buys larger than this fraction of pool liquidity.                           |
+| `slippageBps`              | `500`   | Base swap slippage (basis points).                                               |
+| `maxAutoSlippageRetry`     | `3`     | Retries with more slippage after a slippage failure.                             |
+| `autoSlippageIncrementBps` | `100`   | Slippage added per auto-slippage retry (bps).                                    |
+| `inlineSwapSimulation`     | `true`  | Simulate swaps before sending them.                                              |
+| `backgroundAtaClose`       | `true`  | Close emptied token accounts in the background after full exits (reclaims rent). |
+| `enableLocalRouting`       | `true`  | Allow direct pump.fun / Raydium / Meteora routing without Jupiter.               |
+| `dynamicSizingEnabled`     | `false` | Scale position size with recent performance.                                     |
+| `kellyEnabled`             | `false` | Use Kelly-fraction sizing once enough trades exist.                              |
+| `maxKellyFraction`         | `0.25`  | Cap on the Kelly fraction.                                                       |
+| `kellyMinTrades`           | `10`    | Closed trades required before Kelly sizing applies.                              |
 
 ### Priority fees & Jito tips
 
@@ -336,11 +329,9 @@ Keys marked **Not currently read by the code** are accepted and validated, but n
 | `takeProfitFractions`               | `[0.75, 0.6]` | Fraction of the remaining position sold at each ladder step.          |
 | `takeProfitFraction`                | `0.6`         | Single-step take-profit fraction used by the ghost trader.            |
 | `highGrowthConfidenceScore`         | `80`          | Score at or above which the high-confidence take-profit plan is used. |
-| `standardGrowthConfidenceScore`     | `70`          | **Not currently read by the code.**                                   |
 | `maxHoldMinutes`                    | `20`          | Time exit for standard-confidence positions.                          |
 | `timeExitMinMultiple`               | `1.25`        | The time exit only fires while price is below this entry multiple.    |
 | `holdDurationHighConfidenceMinutes` | `30`          | Time exit for high-confidence positions.                              |
-| `holdDurationLowConfidenceMinutes`  | `5`           | **Not currently read by the code.**                                   |
 | `minHoldTimeSeconds`                | `1`           | The performance-momentum exit is not evaluated before this age.       |
 | `moonBagFraction`                   | `0.1`         | Fraction of the initial size kept as a runner (0 disables it).        |
 | `moonBagTrailingDrawdownPct`        | `0.3`         | Trailing drawdown (ratio) that closes the runner.                     |
@@ -368,7 +359,6 @@ Keys marked **Not currently read by the code** are accepted and validated, but n
 | `earlyPerformanceGuardSeconds` | `60`    | Window in which the early performance guard is active.                             |
 | `earlyPerformanceDropPct`      | `10`    | The early guard exits if price drops more than this (%).                           |
 | `earlyPerformanceSellPct`      | `50`    | Share (%) of the position the early guard sells.                                   |
-| `buyingTheTopSlPct`            | `25`    | **Not currently read by the code.**                                                |
 | `buyTopAthBufferPct`           | `2`     | Reject if the current price is within this % of the highest seen price.            |
 | `maxBuyTopGrowthPct`           | `70`    | Reject if price already grew more than this (%) since first seen (anti-top guard). |
 

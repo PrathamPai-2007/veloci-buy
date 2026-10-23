@@ -167,7 +167,7 @@ test('scan short-circuits the buy pipeline once when the drawdown breaker is tri
 });
 
 test('bot schedules indexing-lag retries and drops entries after the retry cap', () => {
-  const { config, state, cleanup } = seedBotState({ rpcIndexingRetryDelayMs: 1234 });
+  const { state, cleanup } = seedBotState({});
   state.pendingCandidateRechecks.set('LagMint', {
     mint: 'LagMint',
     tokenSnapshot: { id: 'LagMint', symbol: 'LAG' } as TokenMetadata,
@@ -199,7 +199,6 @@ test('bot schedules indexing-lag retries and drops entries after the retry cap',
   );
 
   assert.equal(state.pendingCandidateRechecks.has('LagMint'), false);
-  assert.equal(config.rpcIndexingRetryDelayMs, 1234);
   cleanup();
 });
 
@@ -224,7 +223,6 @@ test('bot holder-count waitlists use the dedicated holder wait duration', () => 
 test('bot skips borderline requeues entirely when borderline rechecks are disabled', async () => {
   const { state, cleanup } = seedBotState({
     borderlineRecheckEnabled: false,
-    maxCandidatesPerScan: 5,
   });
   const token = {
     id: 'NoRequeueMint',
@@ -257,7 +255,6 @@ test('bot skips borderline requeues entirely when borderline rechecks are disabl
 test('bot rejects hard blockers even when another reason is recheck eligible', async () => {
   const { state, cleanup } = seedBotState({
     borderlineRecheckEnabled: true,
-    maxCandidatesPerScan: 5,
   });
   const token = {
     id: 'HardBlockMint',
@@ -291,7 +288,7 @@ test('bot rejects hard blockers even when another reason is recheck eligible', a
 });
 
 test('bot cancels pullback rechecks when price deterioration exceeds the configured threshold', async () => {
-  const { state, cleanup } = seedBotState({ recheckPriceDropPct: 10, maxCandidatesPerScan: 5 });
+  const { state, cleanup } = seedBotState({ recheckPriceDropPct: 10 });
   state.pendingCandidateRechecks.set('PullbackMint', {
     mint: 'PullbackMint',
     tokenSnapshot: {
@@ -335,7 +332,6 @@ test('bot counts reserved buy slots against the max open position limit', async 
   const { state, cleanup } = seedBotState({
     maxOpenPositions: 1,
     maxBuysPerScan: 2,
-    maxCandidatesPerScan: 5,
     scanParallelismHeavy: 2,
   });
   const tokens = [
@@ -384,7 +380,7 @@ test('bot counts reserved buy slots against the max open position limit', async 
 });
 
 test('bot records scan backpressure successes and transient failures', async () => {
-  const { cleanup } = seedBotState({ maxCandidatesPerScan: 5 });
+  const { cleanup } = seedBotState({});
   const token = {
     id: 'BackpressureMint',
     symbol: 'BKP',
@@ -435,7 +431,7 @@ test('bot records scan backpressure successes and transient failures', async () 
 });
 
 test('bot promotes due survival candidates to final audit after passing confirmation', async () => {
-  const { state, cleanup } = seedBotState({ maxCandidatesPerScan: 5 });
+  const { state, cleanup } = seedBotState({});
   const token = {
     id: 'SurvivalMint',
     symbol: 'SURV',
@@ -480,7 +476,7 @@ test('bot promotes due survival candidates to final audit after passing confirma
 });
 
 test('bot does not promote failed survival candidates', async () => {
-  const { state, cleanup } = seedBotState({ maxCandidatesPerScan: 5 });
+  const { state, cleanup } = seedBotState({});
   const token = {
     id: 'FailedSurvivalMint',
     symbol: 'FSURV',
@@ -523,7 +519,6 @@ test('bot does not promote failed survival candidates', async () => {
 
 test('bot processes due nextEligibleAt final audits and attempts buy', async () => {
   const { state, cleanup } = seedBotState({
-    maxCandidatesPerScan: 5,
     maxOpenPositions: 2,
     maxBuysPerScan: 2,
   });

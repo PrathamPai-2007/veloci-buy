@@ -54,7 +54,6 @@ test('snapshot TP plan: high profile with custom multiples and fractions', (t) =
     takeProfitFractions: [0.8, 0.5],
     trailingStopDrawdownPct: 0.18,
     holdDurationHighConfidenceMinutes: 15,
-    holdDurationLowConfidenceMinutes: 8,
   });
   const highPlan = getTakeProfitPlanByProfile(ctx, 'high');
   const standardPlan = getTakeProfitPlanByProfile(ctx, 'standard');

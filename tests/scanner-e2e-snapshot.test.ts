@@ -316,10 +316,8 @@ function createCannedScanContext() {
     paperTrading: true,
     maxOpenPositions: 10,
     maxBuysPerScan: 2,
-    maxCandidatesPerScan: 15,
     borderlineRecheckEnabled: true,
     borderlineRecheckMinDelayMs: 10_000,
-    borderlineRecheckMaxDelayMs: 20_000,
     minCandidateScore: 60,
   });
   return {

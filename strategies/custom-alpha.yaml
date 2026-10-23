@@ -26,6 +26,5 @@ errorRateWindow: 77
 backpressureErrorRateThreshold: 0.77
 mintSignalMaxAttempts: 7
 mintSignalRetryDelayMs: 700
-rpcIndexingRetryDelayMs: 7000
 mlScoreGateThreshold: 0.35
 mlScoreWeight: 0.3
