@@ -1,4 +1,4 @@
-﻿import { EventEmitter } from 'node:events';
+import { EventEmitter } from 'node:events';
 import { MAX_TRACKED_MINTS } from '../config.js';
 import {
   Config,
@@ -66,6 +66,35 @@ export class StateStore extends EventEmitter {
         finalAuditPassed: 0,
         finalAuditDeferredIndexing: 0,
         finalAuditRejected: 0,
+        localMarketReads: 0,
+        localMarketMisses: 0,
+        externalPriceFallbacks: 0,
+        jupiterPriceRequests: 0,
+        getTokenLargestAccountsRequests: 0,
+        getMultipleAccountsRequests: 0,
+        tokenAccountInitializations: 0,
+        candidateDiscoveries: 0,
+        cheapGatePasses: 0,
+        deepAuditCandidates: 0,
+        tokenLargestInitializations: 0,
+        tokenLargestFallbacks: 0,
+        tokenLargest429s: 0,
+        invalidMintSkips: 0,
+        jupiterCircuitOpens: 0,
+        jupiterCircuitCloses: 0,
+        jupiterCircuitProbes: 0,
+        jupiterSuppressedRequests: 0,
+        consecutiveJupiterFailures: 0,
+        jupiterDiscoveryRequests: 0,
+        jupiterDiscoveryTimeouts: 0,
+        monitorTicks: 0,
+        monitorTicksAborted: 0,
+        monitorRpcFailures: 0,
+        monitorTicksUsingCachedBalance: 0,
+        securityAuditsQueued: 0,
+        securityAuditsSkippedInFlight: 0,
+        securityAuditsCompleted: 0,
+        securityAuditsFailed: 0,
         exitReasonCounts: {},
         rejectionReasons: {},
       },
@@ -75,12 +104,7 @@ export class StateStore extends EventEmitter {
       consecutiveLosses: 0,
       recentPnlWindow: [],
       lossStreakPauseActive: false,
-      jupiterPriceCooldownUntil: null,
-      jupiterPositionPriceCooldownUntil: null,
       prefetchedMintSignals: new Map(),
-      burstPriceSamples: new Map(),
-      swingWatchlist: new Map(),
-      swingJupiterCooldownUntil: null,
       mintToPool: new Map(),
     };
   }
@@ -94,7 +118,6 @@ export class StateStore extends EventEmitter {
 
     this.state.pendingCandidateRechecks.delete(mint);
     this.state.prefetchedMintSignals.delete(mint);
-    this.state.burstPriceSamples.delete(mint);
     this.persistence.runRemoveRecheck(mint);
 
     this.state.processedMints.add(mint);
@@ -168,12 +191,11 @@ export class StateStore extends EventEmitter {
    */
   public incrementMetric(key: keyof StateMetrics, amount = 1): void {
     const value = this.state.metrics[key];
-    if (typeof value === 'number') {
-      const newValue = value + amount;
-      (this.state.metrics as unknown as Record<string, number>)[key] = newValue;
-      this.persistence.runUpsertMetric(key, String(newValue));
-      this.emit('metricUpdated', { key, value: newValue });
-    }
+    const currentNum = typeof value === 'number' ? value : 0;
+    const newValue = currentNum + amount;
+    (this.state.metrics as unknown as Record<string, number>)[key] = newValue;
+    this.persistence.runUpsertMetric(key, String(newValue));
+    this.emit('metricUpdated', { key, value: newValue });
   }
 
   /**
@@ -183,7 +205,9 @@ export class StateStore extends EventEmitter {
    */
   public updateMetric<K extends keyof StateMetrics>(key: K, value: StateMetrics[K]): void {
     this.state.metrics[key] = value;
-    this.persistence.runUpsertMetric(key, value);
+    if (value !== undefined) {
+      this.persistence.runUpsertMetric(key, value as string | number | Record<string, number>);
+    }
     this.emit('metricUpdated', { key, value });
   }
 

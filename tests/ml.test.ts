@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { ScoringModel } from '../src/ml/scoring-model.js';
+import { ModelBucket as ScoringModel } from '../src/ml/model-bucket.js';
 import { MlService } from '../src/ml/ml-service.js';
 import { StateStore } from '../src/core/store.js';
 import {
@@ -189,12 +189,12 @@ test('ScoringModel weights round-trip through save/load', { skip: !NATIVE }, asy
   await model.train(makeSamples(60));
 
   const kv: Record<string, string> = {};
-  model.saveWeights((k, v) => {
+  model.saveWeights((k: string, v: string) => {
     kv[k] = v;
   });
 
   const restored = new ScoringModel(20);
-  const ok = restored.loadWeights((k) => kv[k] ?? null);
+  const ok = restored.loadWeights((k: string) => kv[k] ?? null);
   assert.equal(ok, true);
   assert.equal(restored.getIsTrained(), true);
 
@@ -615,7 +615,11 @@ test(
 );
 
 test('getScore returns null when ML is disabled', () => {
+  const prev = process.env.ML_ENABLED;
+  delete process.env.ML_ENABLED;
   const svc = new MlService();
   svc.init(makeFakeStore(0, []), { ...makeConfig(), logFile: '' } as unknown as Config);
   assert.equal(svc.getScore(makeEvalResult()), null);
+  if (prev === undefined) delete process.env.ML_ENABLED;
+  else process.env.ML_ENABLED = prev;
 });

@@ -1,0 +1,193 @@
+exports[`snapshot evaluateCandidate: buying-the-top rejection 1`] = `
+{
+  "adjustedThresholds": {
+    "minBuys5m": 0.75,
+    "minHolderCount": 2.8,
+    "minLiquidityUsd": 562.5,
+    "minPoolAgeSeconds": 5
+  },
+  "approved": false,
+  "blockers": [
+    "Buying the top detected: Growth since start is 125.0% and price is near ATH. Waiting for pullback."
+  ],
+  "candidateScore": 95,
+  "launchpadProfile": {
+    "buysMultiplier": 0.75,
+    "holderMultiplier": 0.7,
+    "liquidityMultiplier": 0.75,
+    "minPoolAgeSeconds": 5,
+    "name": "pump.fun",
+    "scoreBonus": 10
+  },
+  "notes": [],
+  "rejectionReasons": [
+    {
+      "code": "buying-the-top",
+      "recheckEligible": true
+    }
+  ],
+  "token": {
+    "decimals": 6,
+    "fdv": 10000000,
+    "firstPool": {
+      "createdAt": "2023-11-14T22:08:20.000Z"
+    },
+    "holderCount": 200,
+    "id": "TopMintPump",
+    "isTrending": false,
+    "launchpad": "pump.fun",
+    "liquidity": 10000,
+    "name": "Top Token",
+    "organicScore": 100,
+    "stats5m": {
+      "numBuys": 50,
+      "numSells": 10
+    },
+    "symbol": "TOP",
+    "usdPrice": 225
+  },
+  "volatilityScaler": 0
+}
+`;
+
+exports[`snapshot evaluateCandidate: low entry score rejection 1`] = `
+{
+  "adjustedThresholds": {
+    "minBuys5m": 0.75,
+    "minHolderCount": 2.8,
+    "minLiquidityUsd": 562.5,
+    "minPoolAgeSeconds": 5
+  },
+  "approved": true,
+  "blockers": [],
+  "candidateScore": 95,
+  "launchpadProfile": {
+    "buysMultiplier": 0.75,
+    "holderMultiplier": 0.7,
+    "liquidityMultiplier": 0.75,
+    "minPoolAgeSeconds": 5,
+    "name": "pump.fun",
+    "scoreBonus": 10
+  },
+  "notes": [],
+  "rejectionReasons": [],
+  "token": {
+    "decimals": 6,
+    "fdv": 500000,
+    "firstPool": {
+      "createdAt": "2023-11-14T22:12:20.000Z"
+    },
+    "holderCount": 50,
+    "id": "LowScoreMintPump",
+    "isTrending": false,
+    "launchpad": "pump.fun",
+    "liquidity": 8000,
+    "name": "Low Score Token",
+    "organicScore": 30,
+    "stats5m": {
+      "numBuys": 5,
+      "numSells": 2
+    },
+    "symbol": "LOW",
+    "usdPrice": 0.001
+  },
+  "volatilityScaler": 0
+}
+`;
+
+exports[`snapshot evaluateCandidate: standard approval (pump.fun) 1`] = `
+{
+  "adjustedThresholds": {
+    "minBuys5m": 0.75,
+    "minHolderCount": 2.8,
+    "minLiquidityUsd": 562.5,
+    "minPoolAgeSeconds": 5
+  },
+  "approved": true,
+  "blockers": [],
+  "candidateScore": 95,
+  "launchpadProfile": {
+    "buysMultiplier": 0.75,
+    "holderMultiplier": 0.7,
+    "liquidityMultiplier": 0.75,
+    "minPoolAgeSeconds": 5,
+    "name": "pump.fun",
+    "scoreBonus": 10
+  },
+  "notes": [],
+  "rejectionReasons": [],
+  "token": {
+    "decimals": 6,
+    "fdv": 1000000,
+    "firstPool": {
+      "createdAt": "2023-11-14T22:11:20.000Z"
+    },
+    "holderCount": 200,
+    "id": "StandardMintPump",
+    "isTrending": false,
+    "launchpad": "pump.fun",
+    "liquidity": 10000,
+    "name": "Standard Pump Token",
+    "organicScore": 100,
+    "stats5m": {
+      "numBuys": 50,
+      "numSells": 10
+    },
+    "symbol": "STD",
+    "usdPrice": 0.001
+  },
+  "volatilityScaler": 0
+}
+`;
+
+exports[`snapshot evaluateCandidate: trending approval with relaxed thresholds 1`] = `
+{
+  "adjustedThresholds": {
+    "minBuys5m": 1,
+    "minHolderCount": 4,
+    "minLiquidityUsd": 750,
+    "minPoolAgeSeconds": 10
+  },
+  "approved": false,
+  "blockers": [
+    "Non-pump.fun launchpad: raydium"
+  ],
+  "candidateScore": 93,
+  "launchpadProfile": {
+    "buysMultiplier": 1,
+    "holderMultiplier": 1,
+    "liquidityMultiplier": 1,
+    "minPoolAgeSeconds": 10,
+    "name": "raydium",
+    "scoreBonus": 8
+  },
+  "notes": [],
+  "rejectionReasons": [
+    {
+      "code": "wrong-launchpad",
+      "recheckEligible": false
+    }
+  ],
+  "token": {
+    "decimals": 6,
+    "fdv": 10000000,
+    "firstPool": {
+      "createdAt": "2023-11-14T22:08:20.000Z"
+    },
+    "holderCount": 1000,
+    "id": "TrendingMintXYZ",
+    "isTrending": true,
+    "launchpad": "raydium",
+    "liquidity": 100000,
+    "name": "Trending Token",
+    "organicScore": 100,
+    "stats5m": {
+      "numBuys": 500,
+      "numSells": 100
+    },
+    "symbol": "TND",
+    "usdPrice": 0.5
+  },
+  "volatilityScaler": 0
+}
+`;

@@ -4,9 +4,9 @@
  * the EnsembleModel apply identical gating semantics.
  */
 
-const CIRCUIT_BREAKER_WINDOW = 100;
-const CIRCUIT_BREAKER_MAX_BLOCK_RATE = 0.4;
-const CIRCUIT_BREAKER_RESET_RATE = 0.2;
+const CIRCUIT_BREAKER_WINDOW = 40;
+const CIRCUIT_BREAKER_MAX_BLOCK_RATE = 0.35;
+const CIRCUIT_BREAKER_RESET_RATE = 0.25;
 
 /**
  * Rolling-window circuit breaker. If the model blocks too large a fraction of

@@ -1,0 +1,38 @@
+name: Scoring Defaults
+description: Scoring and momentum weights used by the evaluation engine and exit calculator
+
+scoringWeights:
+  socialLinkHigh: 15
+  socialLinkLow: 5
+  isVerified: 5
+  organicScoreClamp: 20
+  liquidityRatioHigh: 10
+  liquidityRatioLow: 5
+  holderCountHigh: 5
+  buyPressureBonus: 5
+  suspiciousAuditPenalty: 5
+  volFdvHigh: 5
+  volFdvMid: 3
+  volFdvLow: -3
+
+moodThresholds:
+  winRateCritical: 0.2
+  winRateCautious: 0.4
+  sizeMultiplierCautious: 0.5
+  windowLarge: 10
+  windowSmall: 5
+
+momentumFilters:
+  minAccelerationFactor: 0.3
+  minBuysFirstHalf: 5
+  buyVelocityDecayFactor: 0.4
+  maxExhaustionRangePct: 1.6
+  minMomentumConsistency: 0.6
+
+momentumScoring:
+  imbalanceMax: 5
+  accelMax: 4
+  trajectoryMax: 5
+  min: -10
+  max: 12
+  growthBandPct: 0.3

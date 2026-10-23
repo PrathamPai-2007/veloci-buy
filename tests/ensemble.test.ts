@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { EnsembleModel, bucketFor } from '../src/ml/ensemble-model.js';
+import { ModelBucket as EnsembleModel, bucketFor } from '../src/ml/model-bucket.js';
 import { FEATURE_DIM } from '../src/ml/features.js';
 import { buildSequence } from '../src/ml/sequence-features.js';
 import { TrainingSample } from '../src/types/index.js';
@@ -84,12 +84,12 @@ test('EnsembleModel weights round-trip through save/load', { skip: !NATIVE }, as
   await m.train([...makeSamples(40, 'pump.fun'), ...makeSamples(40, 'raydium')]);
 
   const kv: Record<string, string> = {};
-  m.saveWeights((k, v) => {
+  m.saveWeights((k: string, v: string) => {
     kv[k] = v;
   });
   const restored = new EnsembleModel(20);
   assert.equal(
-    restored.loadWeights((k) => kv[k] ?? null),
+    restored.loadWeights((k: string) => kv[k] ?? null),
     true
   );
   assert.equal(restored.getIsTrained(), true);

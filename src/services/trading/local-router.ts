@@ -33,6 +33,11 @@ export const poolConfigsCache = new Map<string, CachedPoolConfig>();
 // Used by the monitor to suppress rug-exit / stop-loss retries during the Raydium pool settle window.
 export const migrationCooldowns = new Map<string, number>();
 
+export function isMigrationCoolingDown(mint: string, windowMs = 20_000): boolean {
+  const ts = migrationCooldowns.get(mint);
+  return ts !== undefined && Date.now() - ts < windowMs;
+}
+
 export async function buildLocalSwapTransaction(
   ctx: Context,
   inputMint: string,

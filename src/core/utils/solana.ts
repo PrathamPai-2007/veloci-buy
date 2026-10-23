@@ -4,6 +4,10 @@ import bs58 from 'bs58';
 import { Context } from '#types/index.js';
 import { safeJsonStringify, sleep } from './io.js';
 import { PUMP_FUN_PROGRAM_ID } from '../constants.js';
+import { RateLimitError, RpcError } from '../errors.js';
+import { PRIORITY, TokenBucket, makePriorityTokenBucket, redactUrl } from './rate-limit.js';
+
+export { PRIORITY };
 
 export function normalizeLaunchpad(value: string): string {
   return String(value || 'unknown')
@@ -45,17 +49,24 @@ export function isTransientOperationError(error: unknown): boolean {
   );
 }
 
-export enum PRIORITY {
-  ULTRA_HIGH = 0,
-  HIGH = 1,
-  MEDIUM = 2,
-  LOW = 3,
-}
+const RPC_CACHE_MAX_ENTRIES = 5000;
 
 class ShortTermCache {
   private store = new Map<string, { value: unknown; expiresAt: number }>();
 
   set(key: string, value: unknown, ttlMs: number = 5000): void {
+    if (this.store.size >= RPC_CACHE_MAX_ENTRIES) {
+      const now = Date.now();
+      for (const [k, entry] of this.store) {
+        if (entry.expiresAt <= now) this.store.delete(k);
+      }
+      // Still full: evict oldest inserts (Map preserves insertion order).
+      for (const k of this.store.keys()) {
+        if (this.store.size < RPC_CACHE_MAX_ENTRIES) break;
+        this.store.delete(k);
+      }
+    }
+    this.store.delete(key);
     this.store.set(key, { value, expiresAt: Date.now() + ttlMs });
   }
 
@@ -76,96 +87,64 @@ class ShortTermCache {
 
 const rpcCache = new ShortTermCache();
 
-function makePriorityTokenBucket(
-  ratePerSec: number
-): (priority?: PRIORITY, signal?: AbortSignal) => Promise<void> {
-  const intervalMs = 1000 / ratePerSec;
-  let tokens = ratePerSec;
-  let lastRefillAt = Date.now();
+type RpcRequest<T> = {
+  send: (options?: { abortSignal?: AbortSignal }) => Promise<T>;
+};
 
-  type QueueItem = { resolve: () => void; reject: (e: Error) => void; signal?: AbortSignal };
-
-  const queues: Record<PRIORITY, QueueItem[]> = {
-    [PRIORITY.ULTRA_HIGH]: [],
-    [PRIORITY.HIGH]: [],
-    [PRIORITY.MEDIUM]: [],
-    [PRIORITY.LOW]: [],
-  };
-
-  const refill = (): void => {
-    const now = Date.now();
-    const elapsed = now - lastRefillAt;
-    const refilled = Math.floor(elapsed / intervalMs);
-    if (refilled > 0) {
-      tokens = Math.min(ratePerSec, tokens + refilled);
-      lastRefillAt += refilled * intervalMs;
-    }
-  };
-
-  const processQueues = (): void => {
-    refill();
-
-    // Clear any items that were aborted while waiting
-    for (const pri of [PRIORITY.ULTRA_HIGH, PRIORITY.HIGH, PRIORITY.MEDIUM, PRIORITY.LOW]) {
-      const q = queues[pri as PRIORITY];
-      for (let i = q.length - 1; i >= 0; i--) {
-        if (q[i]?.signal?.aborted) {
-          const item = q.splice(i, 1)[0];
-          item?.reject(new Error('Aborted in queue'));
-        }
-      }
-    }
-
-    while (tokens >= 1) {
-      const p = [PRIORITY.ULTRA_HIGH, PRIORITY.HIGH, PRIORITY.MEDIUM, PRIORITY.LOW].find(
-        (pri) => queues[pri as PRIORITY].length > 0
-      );
-      if (p === undefined) break;
-
-      tokens -= 1;
-      const item = queues[p as PRIORITY].shift();
-      if (item) item.resolve();
-    }
-
-    const hasWaiters = Object.values(queues).some((q) => q.length > 0);
-    if (hasWaiters) {
-      const msUntilNext = Math.max(1, intervalMs - (Date.now() - lastRefillAt));
-      setTimeout(processQueues, msUntilNext);
-    }
-  };
-
-  return function acquireToken(
-    priority: PRIORITY = PRIORITY.MEDIUM,
-    signal?: AbortSignal
-  ): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      if (signal?.aborted) {
-        return reject(new Error('Aborted before queue'));
-      }
-
-      const item: QueueItem = { resolve, reject, signal };
-
-      if (signal) {
-        const onAbort = () => {
-          const q = queues[priority];
-          const idx = q.indexOf(item);
-          if (idx !== -1) {
-            q.splice(idx, 1);
-          }
-          reject(new Error('Aborted in queue'));
-          signal.removeEventListener('abort', onAbort);
-        };
-        signal.addEventListener('abort', onAbort);
-      }
-
-      queues[priority].push(item);
-      processQueues();
-    });
-  };
+function isRpcRequest<T>(value: unknown): value is RpcRequest<T> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'send' in value &&
+    typeof value.send === 'function'
+  );
 }
 
-const RPC_MAX_REQUESTS_PER_SEC = 10;
-const RPC_MAX_SEND_TX_PER_SEC = 1;
+type RpcMethod<TMethod extends keyof SolanaRpcApi> = (
+  ...args: Parameters<SolanaRpcApi[TMethod]>
+) =>
+  | RpcRequest<ReturnType<SolanaRpcApi[TMethod]>>
+  | ReturnType<SolanaRpcApi[TMethod]>
+  | Promise<ReturnType<SolanaRpcApi[TMethod]>>;
+
+export const RPC_MAX_REQUESTS_PER_SEC = 10;
+export const RPC_MAX_SEND_TX_PER_SEC = 1;
+
+export function setRpcRateLimits(rpcRateLimits: number[], sendTxLimits: number[]): void {
+  // Called from bot startup after config is known; overrides per-endpoint creation.
+  // Actual per-index buckets are lazy; we store overrides for acquireRpcToken to consult.
+  perIndexRpcLimits = rpcRateLimits;
+  perIndexSendTxLimits = sendTxLimits;
+  // Reset buckets so next acquire picks up new rates (e.g. in tests)
+  rpcBuckets.clear();
+  sendTxBuckets.clear();
+}
+
+let perIndexRpcLimits: number[] | null = null;
+let perIndexSendTxLimits: number[] | null = null;
+
+const HEAVY_RPC_METHODS = new Set(['getTokenLargestAccounts', 'getProgramAccounts']);
+const HEAVY_RPC_SPACING_MS = 300;
+let heavyRpcQueue: Promise<void> = Promise.resolve();
+
+/**
+ * Runs `fn` while holding the single heavy-RPC slot: at most one heavy call in flight,
+ * and the next one starts no sooner than 300ms after the previous one settled.
+ */
+export async function withHeavySlot<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal?.aborted) throw new Error('Aborted before heavy RPC queue');
+  const previous = heavyRpcQueue;
+  let release: () => void = () => {};
+  heavyRpcQueue = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    setTimeout(release, HEAVY_RPC_SPACING_MS);
+  }
+}
 
 // Per-endpoint token buckets, keyed by RPC pool index. The pool size isn't known at
 // module load, so buckets are created lazily on first use for each index. Each RPC_URL
@@ -174,36 +153,100 @@ const RPC_MAX_SEND_TX_PER_SEC = 1;
 // independent limits.
 // ponytail: per-index buckets, not per-provider; index keying is enough for a 1-2 endpoint
 // setup. Revisit only if running many URLs that share a key.
-const rpcBuckets = new Map<number, (priority?: PRIORITY, signal?: AbortSignal) => Promise<void>>();
-const sendTxBuckets = new Map<
-  number,
-  (priority?: PRIORITY, signal?: AbortSignal) => Promise<void>
->();
+const rpcBuckets = new Map<number, TokenBucket>();
+const sendTxBuckets = new Map<number, TokenBucket>();
 
-function acquireRpcToken(index: number, priority?: PRIORITY, signal?: AbortSignal): Promise<void> {
+function getRpcBucket(index: number): TokenBucket {
   let bucket = rpcBuckets.get(index);
   if (!bucket) {
-    bucket = makePriorityTokenBucket(RPC_MAX_REQUESTS_PER_SEC);
+    bucket = makePriorityTokenBucket(perIndexRpcLimits?.[index] ?? RPC_MAX_REQUESTS_PER_SEC);
     rpcBuckets.set(index, bucket);
   }
-  return bucket(priority, signal);
+  return bucket;
 }
 
-function acquireSendTxToken(
-  index: number,
-  priority?: PRIORITY,
-  signal?: AbortSignal
-): Promise<void> {
+function getSendTxBucket(index: number): TokenBucket {
   let bucket = sendTxBuckets.get(index);
   if (!bucket) {
-    bucket = makePriorityTokenBucket(RPC_MAX_SEND_TX_PER_SEC);
+    bucket = makePriorityTokenBucket(perIndexSendTxLimits?.[index] ?? RPC_MAX_SEND_TX_PER_SEC);
     sendTxBuckets.set(index, bucket);
   }
-  return bucket(priority, signal);
+  return bucket;
 }
 
-const rpcHealth = new Map<number, { errorCount: number; lastErrorAt: number }>();
+/** Penalty applied to an endpoint's bucket after the provider answers 429. */
+const RPC_429_PENALTY_MS = 30_000;
+const rpcInFlight = new Map<string, Promise<unknown>>();
+
+export interface RpcEndpointHealth {
+  index: number;
+  url: string;
+  rpcTier?: string;
+  rpcRateLimit?: number;
+  rpcSendTxRateLimit?: number;
+  errorCount: number;
+  rateLimitCount: number;
+  totalRequests: number;
+  avgLatencyMs: number;
+  lastSuccessAt: number;
+  lastErrorAt: number;
+  isQuarantined: boolean;
+}
+
+interface RpcHealthEntry {
+  errorCount: number;
+  rateLimitCount: number;
+  totalRequests: number;
+  totalLatencyMs: number;
+  lastSuccessAt: number;
+  lastErrorAt: number;
+}
+
+const rpcHealth = new Map<number, RpcHealthEntry>();
 let _rpcIndex = 0;
+
+export function getRpcHealthStatus(ctx?: Context): RpcEndpointHealth[] {
+  const rpcPool =
+    ctx && Array.isArray(ctx.rpcs) && ctx.rpcs.length > 0 ? ctx.rpcs : ctx?.rpc ? [ctx.rpc] : [];
+  const now = Date.now();
+  const urls = ctx?.config?.rpcUrls || [];
+
+  const tiers = (ctx?.config?.rpcTiers as string[] | undefined) || [];
+  const limits = (ctx?.config?.rpcRateLimits as number[] | undefined) || [];
+  const sendLimits = (ctx?.config?.rpcSendTxRateLimits as number[] | undefined) || [];
+  const results: RpcEndpointHealth[] = [];
+  const totalEntries = Math.max(rpcPool.length, rpcHealth.size, 1);
+
+  for (let i = 0; i < totalEntries; i++) {
+    const entry = rpcHealth.get(i) || {
+      errorCount: 0,
+      rateLimitCount: 0,
+      totalRequests: 0,
+      totalLatencyMs: 0,
+      lastSuccessAt: 0,
+      lastErrorAt: 0,
+    };
+    const isQuarantined = entry.errorCount >= 3 && now - entry.lastErrorAt <= 60000;
+    const avgLatencyMs =
+      entry.totalRequests > 0 ? Math.round(entry.totalLatencyMs / entry.totalRequests) : 0;
+    results.push({
+      index: i,
+      url: urls[i] || `RPC #${i + 1}`,
+      rpcTier: tiers[i],
+      rpcRateLimit: limits[i],
+      rpcSendTxRateLimit: sendLimits[i],
+      errorCount: entry.errorCount,
+      rateLimitCount: entry.rateLimitCount,
+      totalRequests: entry.totalRequests,
+      avgLatencyMs,
+      lastSuccessAt: entry.lastSuccessAt,
+      lastErrorAt: entry.lastErrorAt,
+      isQuarantined,
+    });
+  }
+
+  return results;
+}
 
 export async function rpcCall<TMethod extends keyof SolanaRpcApi>(
   ctx: Context,
@@ -223,19 +266,44 @@ export async function rpcCall<TMethod extends keyof SolanaRpcApi>(
     throw new Error('rpcCall aborted');
   }
 
+  const cacheTtlMs = options.cacheTtlMs ?? 0;
+  const cacheKey = cacheTtlMs > 0 ? `${String(method)}:${safeJsonStringify(params)}` : null;
+  if (!cacheKey) return rpcCallUncached(ctx, method, params, options, null);
+
+  const cached = rpcCache.get(cacheKey);
+  if (cached !== null) return cached as ReturnType<SolanaRpcApi[TMethod]>;
+  // Single-flight: identical cacheable reads share one request (and one bucket token).
+  const inFlight = rpcInFlight.get(cacheKey);
+  if (inFlight) return inFlight as Promise<ReturnType<SolanaRpcApi[TMethod]>>;
+  const request = rpcCallUncached(ctx, method, params, options, cacheKey).finally(() => {
+    rpcInFlight.delete(cacheKey);
+  });
+  rpcInFlight.set(cacheKey, request);
+  return request;
+}
+
+async function rpcCallUncached<TMethod extends keyof SolanaRpcApi>(
+  ctx: Context,
+  method: TMethod,
+  params: Parameters<SolanaRpcApi[TMethod]> | [],
+  options: {
+    priority?: PRIORITY;
+    maxAttempts?: number;
+    cacheTtlMs?: number;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  },
+  cacheKey: string | null
+): Promise<ReturnType<SolanaRpcApi[TMethod]>> {
   const priority = options.priority ?? PRIORITY.MEDIUM;
   const maxAttempts = options.maxAttempts ?? 3;
   const cacheTtlMs = options.cacheTtlMs ?? 0;
   const timeoutMs = options.timeoutMs ?? 12000;
   let lastError: unknown = null;
 
-  const cacheKey = cacheTtlMs > 0 ? `${String(method)}:${safeJsonStringify(params)}` : null;
-  if (cacheKey) {
-    const cached = rpcCache.get(cacheKey);
-    if (cached !== null) return cached as ReturnType<SolanaRpcApi[TMethod]>;
-  }
-
-  const rpcPool = Array.isArray(ctx.rpcs) && ctx.rpcs.length > 0 ? ctx.rpcs : [ctx.rpc];
+  const currentRpc = ctx.getCurrentRpc?.() ?? ctx.rpc;
+  const rpcPool =
+    Array.isArray(ctx.rpcs) && ctx.rpcs.length > 0 ? ctx.rpcs : currentRpc ? [currentRpc] : [];
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (options.signal?.aborted) {
@@ -247,12 +315,38 @@ export async function rpcCall<TMethod extends keyof SolanaRpcApi>(
     let candidates = rpcPool
       .map((rpc, index) => ({ rpc, index }))
       .filter(({ index }) => {
-        const health = rpcHealth.get(index) || { errorCount: 0, lastErrorAt: 0 };
+        const health = rpcHealth.get(index) || {
+          errorCount: 0,
+          rateLimitCount: 0,
+          totalRequests: 0,
+          totalLatencyMs: 0,
+          lastSuccessAt: 0,
+          lastErrorAt: 0,
+        };
         return health.errorCount < 3 || now - health.lastErrorAt > 60000;
       });
 
     if (candidates.length === 0) {
       candidates = rpcPool.map((rpc, index) => ({ rpc, index }));
+    }
+
+    // Tier-aware sharding for Helius+public pool: HIGH/ULTRA/MEDIUM (monitor/exit/position curves) prefer premium,
+    // LOW (scan curves) prefer free. Falls back to any if preferred tier has no healthy candidate.
+    const tiers: ('premium' | 'free')[] | undefined = ctx.config?.rpcTiers as
+      | ('premium' | 'free')[]
+      | undefined;
+    if (tiers) {
+      if (tiers.length !== rpcPool.length && rpcPool.length > 0) {
+        ctx.logger?.(
+          `RPC tier/pool length mismatch (tiers=${tiers.length} pool=${rpcPool.length}); sharding disabled for this call.`,
+          'warn'
+        );
+      } else if (candidates.length > 1) {
+        const preferredTier: 'premium' | 'free' | null =
+          priority === PRIORITY.LOW ? 'free' : 'premium';
+        const tiered = candidates.filter(({ index }) => tiers[index] === preferredTier);
+        if (tiered.length > 0) candidates = tiered;
+      }
     }
 
     const selected = candidates[_rpcIndex % candidates.length];
@@ -262,45 +356,66 @@ export async function rpcCall<TMethod extends keyof SolanaRpcApi>(
     const { rpc, index } = selected;
     _rpcIndex++;
 
+    const startTime = Date.now();
+
     try {
       if (method === ('sendTransaction' as keyof SolanaRpcApi)) {
-        await acquireSendTxToken(index, PRIORITY.ULTRA_HIGH, options.signal);
+        await getSendTxBucket(index).acquire(PRIORITY.ULTRA_HIGH, options.signal);
       }
-      await acquireRpcToken(index, priority, options.signal);
+      await getRpcBucket(index).acquire(priority, options.signal);
 
-      const rpcMethod = rpc[method] as (...args: unknown[]) => {
-        send: (opts?: { abortSignal?: AbortSignal }) => Promise<ReturnType<SolanaRpcApi[TMethod]>>;
-      };
+      const rpcMethod = rpc[method] as RpcMethod<TMethod>;
       const controller = new AbortController();
       let timeoutHandle: NodeJS.Timeout;
-
-      if (options.signal) {
-        options.signal.addEventListener('abort', () => controller.abort());
-        if (options.signal.aborted) controller.abort();
-      }
+      const forwardAbort = (): void => controller.abort();
+      options.signal?.addEventListener('abort', forwardAbort, { once: true });
 
       // Promise.race guarantees the timeout rejects even if .send() ignores the AbortSignal
       // (which @solana/kit can do under certain transports, causing silent 60s+ hangs).
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          controller.abort();
-          reject(new Error(`rpcCall ${String(method)} timed out after ${timeoutMs}ms`));
-        }, timeoutMs);
-      });
       let result: ReturnType<SolanaRpcApi[TMethod]>;
+      const send = async (): Promise<ReturnType<SolanaRpcApi[TMethod]>> => {
+        // Timeout starts once the request is actually sent (not while queued for a slot).
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            controller.abort();
+            reject(new Error(`rpcCall ${String(method)} timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        });
+        const response = rpcMethod(...(params as Parameters<SolanaRpcApi[TMethod]>));
+        const sendPromise = isRpcRequest<ReturnType<SolanaRpcApi[TMethod]>>(response)
+          ? response.send({ abortSignal: controller.signal })
+          : Promise.resolve(response);
+        // Prevent UnhandledPromiseRejection if send rejects after timeout wins
+        sendPromise.catch(() => {});
+        timeoutPromise.catch(() => {});
+        return Promise.race([sendPromise, timeoutPromise]);
+      };
       try {
-        result = await Promise.race([
-          rpcMethod(...(params as unknown[])).send({ abortSignal: controller.signal }),
-          timeoutPromise,
-        ]);
+        result = HEAVY_RPC_METHODS.has(String(method))
+          ? await withHeavySlot(send, options.signal)
+          : await send();
       } catch (e: unknown) {
-        clearTimeout(timeoutHandle!);
         controller.abort();
         throw e;
+      } finally {
+        clearTimeout(timeoutHandle!);
+        options.signal?.removeEventListener('abort', forwardAbort);
       }
-      clearTimeout(timeoutHandle!);
 
-      rpcHealth.set(index, { errorCount: 0, lastErrorAt: 0 });
+      const latency = Date.now() - startTime;
+      const stats = rpcHealth.get(index) || {
+        errorCount: 0,
+        rateLimitCount: 0,
+        totalRequests: 0,
+        totalLatencyMs: 0,
+        lastSuccessAt: 0,
+        lastErrorAt: 0,
+      };
+      stats.errorCount = 0;
+      stats.totalRequests++;
+      stats.totalLatencyMs += latency;
+      stats.lastSuccessAt = Date.now();
+      rpcHealth.set(index, stats);
 
       if (cacheKey) rpcCache.set(cacheKey, result, cacheTtlMs);
       return result as ReturnType<SolanaRpcApi[TMethod]>;
@@ -311,18 +426,49 @@ export async function rpcCall<TMethod extends keyof SolanaRpcApi>(
         throw new Error('rpcCall aborted', { cause: e });
       }
 
-      const health = rpcHealth.get(index) || { errorCount: 0, lastErrorAt: 0 };
-      health.errorCount++;
-      health.lastErrorAt = now;
-      rpcHealth.set(index, health);
+      const errMsg = String((e as { message?: string })?.message || e || '').toLowerCase();
+      const isRateLimit =
+        errMsg.includes('429') ||
+        errMsg.includes('rate limit') ||
+        errMsg.includes('too many requests');
+
+      const stats = rpcHealth.get(index) || {
+        errorCount: 0,
+        rateLimitCount: 0,
+        totalRequests: 0,
+        totalLatencyMs: 0,
+        lastSuccessAt: 0,
+        lastErrorAt: 0,
+      };
+      stats.errorCount++;
+      if (isRateLimit) {
+        stats.rateLimitCount++;
+        getRpcBucket(index).penalize(RPC_429_PENALTY_MS);
+      }
+      stats.lastErrorAt = Date.now();
+      rpcHealth.set(index, stats);
 
       if (isTransientOperationError(e) && attempt < maxAttempts - 1) {
         if (candidates.length > 1) continue;
 
-        await sleep(500 * (attempt + 1));
+        const backoffMs = isRateLimit ? 1000 * Math.pow(2, attempt) : 500 * (attempt + 1);
+        await sleep(backoffMs);
         continue;
       }
-      throw e;
+
+      if (isRateLimit) {
+        throw new RateLimitError(
+          `RPC rate limit exceeded on method ${String(method)}: ${redactUrl(String((e as Error)?.message || e))}`,
+          1000 * Math.pow(2, attempt),
+          e
+        );
+      }
+
+      throw new RpcError(
+        `RPC method ${String(method)} failed: ${redactUrl(String((e as Error)?.message || e))}`,
+        index,
+        e
+      );
     }
   }
   throw lastError;
@@ -338,24 +484,14 @@ export function decodePumpCurve(buffer: Buffer): {
   creator?: string;
 } | null {
   if (!buffer || buffer.length < 49) return null;
-  const virtualTokenReserves = buffer.readBigUInt64LE(8);
-  const virtualSolReserves = buffer.readBigUInt64LE(16);
-  const realTokenReserves = buffer.readBigUInt64LE(24);
-  const realSolReserves = buffer.readBigUInt64LE(32);
-  const totalSupply = buffer.readBigUInt64LE(40);
-  const isCompleted = buffer.readUInt8(48) === 1;
-  // `creator` (pubkey @49) only exists on the redeployed Token-2022 curve layout (>= 81 bytes);
-  // legacy/short buffers used for price reads don't carry it, so it stays optional.
-  const creator = buffer.length >= 81 ? bs58.encode(buffer.subarray(49, 81)) : undefined;
-
   return {
-    virtualTokenReserves,
-    virtualSolReserves,
-    realTokenReserves,
-    realSolReserves,
-    totalSupply,
-    isCompleted,
-    creator,
+    virtualTokenReserves: buffer.readBigUInt64LE(8),
+    virtualSolReserves: buffer.readBigUInt64LE(16),
+    realTokenReserves: buffer.readBigUInt64LE(24),
+    realSolReserves: buffer.readBigUInt64LE(32),
+    totalSupply: buffer.readBigUInt64LE(40),
+    isCompleted: buffer.readUInt8(48) === 1,
+    creator: buffer.length >= 81 ? bs58.encode(buffer.subarray(49, 81)) : undefined,
   };
 }
 
@@ -452,6 +588,12 @@ export function decodeMeteoraPool(buffer: Buffer): {
 }
 
 export async function derivePumpCurvePda(mint: string): Promise<string> {
+  const cacheKey = `pump_curve_pda:${mint}`;
+  const cached = rpcCache.get(cacheKey);
+  if (typeof cached === 'string') {
+    return cached;
+  }
+
   try {
     const programId = address(PUMP_FUN_PROGRAM_ID);
     const mintAddress = address(mint);
@@ -461,6 +603,9 @@ export async function derivePumpCurvePda(mint: string): Promise<string> {
       seeds: [new TextEncoder().encode('bonding-curve'), getAddressEncoder().encode(mintAddress)],
     });
 
+    if (pda) {
+      rpcCache.set(cacheKey, pda, 300_000); // 5 min TTL (curve PDAs are immutable)
+    }
     return pda;
   } catch {
     return '';

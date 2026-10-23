@@ -164,5 +164,13 @@ export function journalPaperTrade(ctx: Context, entry: Record<string, unknown>):
 
 export function journalClosedTrade(ctx: Context, trade: Record<string, unknown>): void {
   if (!ctx.config.tradeJournalFile) return;
+  // Ghost trades must never pollute the real trade journal — they have their own file.
+  if ((trade as { isGhost?: boolean }).isGhost) return;
   appendJournalEntry(ctx.config.tradeJournalFile, trade);
+}
+
+export function journalGhostTrade(ctx: Context, trade: Record<string, unknown>): void {
+  const file = (ctx.config as { ghostTradeJournalFile?: string }).ghostTradeJournalFile;
+  if (!file) return;
+  appendJournalEntry(file, { ...trade, isGhost: true, mode: 'ghost' });
 }

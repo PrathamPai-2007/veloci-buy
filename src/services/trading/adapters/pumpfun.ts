@@ -155,8 +155,8 @@ export async function buildPumpFunSwap(
   const bondingCurveV2 = await derivePumpPda('bonding-curve-v2', address(targetMint));
   // Pinned buyback fee recipient + its paired pump_fees account (override the recipient via env;
   // keep them paired). See the BUYBACK_* constants for why these aren't derived.
-  const feeRecipient = process.env.PUMP_FEE_RECIPIENT
-    ? address(process.env.PUMP_FEE_RECIPIENT)
+  const feeRecipient = ctx.config.pumpFeeRecipient
+    ? address(ctx.config.pumpFeeRecipient)
     : BUYBACK_FEE_RECIPIENT;
   const feeRecipientAccount = BUYBACK_FEE_ACCOUNT;
 

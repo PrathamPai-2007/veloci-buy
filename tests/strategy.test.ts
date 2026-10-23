@@ -4,7 +4,7 @@ import test from 'node:test';
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import { loadStrategy, validateStrategy } from '../src/core/config.js';
+import { loadStrategy, validateStrategy, applyStrategyToConfig } from '../src/core/config.js';
 
 const standardYamlPath = path.resolve(process.cwd(), 'strategies', 'standard.yaml');
 const standardConfig = yaml.load(fs.readFileSync(standardYamlPath, 'utf8')) as any;
@@ -83,4 +83,17 @@ test('strategy loader handles malformed yaml by falling back', () => {
     console.error = orig;
     if (fs.existsSync(malformedPath)) fs.unlinkSync(malformedPath);
   }
+});
+
+test('applyStrategyToConfig mutates active config in place', () => {
+  const mockConfig: any = {
+    strategyName: 'standard',
+    stopLossPct: 0.15,
+    minLiquidityUsd: 1000,
+  };
+  const result = applyStrategyToConfig(mockConfig, 'custom-alpha');
+  assert.equal(mockConfig.strategyName, 'custom-alpha');
+  assert.equal(mockConfig.minLiquidityUsd, 777);
+  assert.equal(mockConfig.stopLossPct, 0.07);
+  assert.equal(result.name, 'My Custom Strategy');
 });

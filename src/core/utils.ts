@@ -9,3 +9,4 @@ import { atomicWriteFile } from './utils/io.js';
 
 // Patchable wrapper — keeps atomicWriteFile replaceable in tests.
 export const utilService = { atomicWriteFile };
+export * from './utils/rate-limit.js';

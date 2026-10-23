@@ -15,7 +15,6 @@ module.exports = [
       '.test-artifacts/**',
       // Native addon: generated bindings + dev smoke test, built out-of-band.
       'rust-ml-core/**',
-      'website/**',
       'scratch-test-*.ts',
     ],
   },

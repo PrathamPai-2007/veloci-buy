@@ -6,11 +6,6 @@ import { LaunchpadProfile } from '../types/index.js';
 export const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 /**
- * Common constants used across the application.
- */
-export const constants = { SOL_MINT };
-
-/**
  * Default state file path (relative to session directory).
  */
 export const DEFAULT_STATE_FILE = '';
@@ -29,16 +24,6 @@ export const TAKE_PROFIT_MULTIPLES = [1.5];
  * Fraction of the position to sell at each take-profit level.
  */
 export const TAKE_PROFIT_FRACTION = 0.6;
-
-/**
- * Percentage of the position to sell at each take-profit level.
- */
-export const TP_SELL_PERCENT = Math.round(TAKE_PROFIT_FRACTION * 100);
-
-/**
- * Percentage of the position to hold after a take-profit sell.
- */
-export const TP_HOLD_PERCENT = 100 - TP_SELL_PERCENT;
 
 /**
  * Known addresses representing burned or null owners.
@@ -194,77 +179,9 @@ export const DISCOVERY_SIGNAL_RETENTION_MS = 10 * 60 * 1000;
  */
 export const MARKET_SNAPSHOT_RETENTION_MS = 60 * 60 * 1000;
 
-/**
- * Default timeout for HTTP fetch operations.
- */
-export const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
-
-/**
- * Default number of retries for HTTP fetch operations.
- */
-export const DEFAULT_FETCH_RETRIES = 2;
-
-/**
- * Default delay between retries for HTTP fetch operations.
- */
-export const DEFAULT_FETCH_RETRY_DELAY_MS = 750;
-
-/**
- * Weights used in the scoring algorithm for new tokens.
- */
-export const SCORING_WEIGHTS = {
-  socialLinkHigh: 15,
-  socialLinkLow: 5,
-  isVerified: 5,
-  organicScoreClamp: 20,
-  liquidityRatioHigh: 10,
-  liquidityRatioLow: 5,
-  holderCountHigh: 5,
-  buyPressureBonus: 5,
-  suspiciousAuditPenalty: 5,
-  // Volume/FDV ratio: organic activity signal. High turnover vs market cap = genuine interest.
-  volFdvHigh: 5, // volume24h > 10% of FDV
-  volFdvMid: 3, // volume24h > 5% of FDV
-  volFdvLow: -3, // volume24h < 0.5% of FDV (stagnant)
-};
-
-/**
- * Thresholds for determining market "mood" and adjusting trading behavior.
- */
-export const MOOD_THRESHOLDS = {
-  winRateCritical: 0.2,
-  winRateCautious: 0.4,
-  sizeMultiplierCautious: 0.5,
-  windowLarge: 10,
-  windowSmall: 5,
-};
-
-/**
- * Configuration for momentum-based filters and guards.
- */
-export const MOMENTUM_FILTERS = {
-  minAccelerationFactor: 0.3,
-  minBuysFirstHalf: 5,
-  buyVelocityDecayFactor: 0.4,
-  maxExhaustionRangePct: 1.6,
-  minMomentumConsistency: 0.6,
-};
-
-/**
- * Weights for the signed momentum delta added to a candidate's entry score
- * (see `computeMomentumScore`). The existing `computeCandidateScore` measures token
- * *cleanliness* (socials, organic, liquidity, holders) but almost nothing about *thrust* —
- * paper sessions showed a 95-score token go flat while the only mover scored lowest. This
- * delta tilts the score toward order-flow/price thrust without flipping a clean high score on
- * its own (moderate band). It is validated mainly as a *downside* filter: tokens visibly
- * dumping in the survival window get demoted. Sum of positive sub-scores (5+4+5=14) is clamped
- * to +12; negatives (-14) to -10.
- */
-export const MOMENTUM_SCORING = {
-  imbalanceMax: 5, // graded 5m buy/sell imbalance (replaces nothing; uses stats5m, not buyPressure)
-  accelMax: 4, // buy-flow acceleration: second-half vs first-half tape buys
-  trajectoryMax: 5, // price climb off survival baseline, weighted by green-snapshot consistency
-  min: -10,
-  max: 12,
-  growthBandPct: 0.3, // +/-30% maps trajectory to the full [-1,1] range before weighting
-};
+export {
+  SCORING_WEIGHTS,
+  MOOD_THRESHOLDS,
+  MOMENTUM_FILTERS,
+  MOMENTUM_SCORING,
+} from './scoring-loader.js';

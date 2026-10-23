@@ -1,107 +1,115 @@
-# API Rate Limits Reference
+# Rate limits
 
-Rate limits for every external API the bot calls. All figures are per-key unless noted.
+Every outbound call goes through a **priority token bucket** (`src/core/utils/rate-limit.ts`).
+HTTP calls take a token on **every attempt**, retries included (`fetchJson({ rateLimit })`).
+RPC calls take one in `rpcCall`. When a bucket's upstream answers 429, the bucket halves its rate
+for 30 s.
 
----
+Priorities, highest first: `ULTRA_HIGH` (swap orders, Jito sends) → `HIGH` (monitor/exit
+prices) → `MEDIUM` → `LOW` (discovery, scans, audits, notifications). A waiting exit is always
+served before queued scan traffic in the same bucket.
 
-## RugCheck.xyz
-
-| Tier             | Limit      | Notes                                                |
-| ---------------- | ---------- | ---------------------------------------------------- |
-| Unauthenticated  | 10 req/min | Unusable at scan speed — bot will hit cap in seconds |
-| Free account key | 60 req/min | Sufficient for normal operation                      |
-| Paid plans       | Higher     | See https://rugcheck.xyz for current tiers           |
-
-**Bot usage per token evaluated:**
-
-- 1 call to `/tokens/{mint}/report` (heavy audit, parallel with BubbleMaps)
-- Up to N calls to `/wallet/{addr}/risk` (one per unique top-holder owner)
-
-**At 60 req/min:**
-
-- Token reports: 60 tokens/min max, but heavy audit parallelism (`SCAN_PARALLELISM_HEAVY`) caps it at `SCAN_PARALLELISM_HEAVY` concurrent calls
-- Wallet checks: up to 5 per token (one per top holder) — at `OWNER_AUDIT_PARALLELISM=2` concurrency
-- Practical throughput with defaults: ~6–10 full audits/min before wallet checks consume budget
-
-**429 behavior:** `fetchRugCheckSignals` logs a warning and returns `status: 'error'`. The engine treats this as a soft failure and continues with on-chain mint/freeze/concentration signals only. The token is not blocked solely because RugCheck failed.
-
-**Recommendation:** Always set `RUGCHECK_API_KEY`. Free account key is sufficient for solo bots. If running multiple bot instances on the same key, reduce `SCAN_PARALLELISM_HEAVY` and `OWNER_AUDIT_PARALLELISM` proportionally.
+| Upstream                                         | Bucket key                | Default budget             | Config                                       |
+| ------------------------------------------------ | ------------------------- | -------------------------- | -------------------------------------------- |
+| Jupiter (per API key)                            | `jup:<apiKey>`            | 1 req/s                    | `JUPITER_RPS`                                |
+| Jupiter `/swap/v2/execute`                       | `jup-execute:<apiKey>`    | 50 req/s (separate bucket) | —                                            |
+| RugCheck                                         | `rugcheck`                | 1 req/s                    | `RUGCHECK_RPS`                               |
+| BubbleMaps                                       | `bubblemaps`              | 6 req/min                  | `BUBBLEMAPS_RPM`                             |
+| Jito block engine                                | `jito`                    | 1 req/s                    | `JITO_RPS`                                   |
+| Telegram / Discord                               | `notify:telegram/discord` | 1 req/s / 0.5 req/s        | —                                            |
+| Solana RPC (per `RPC_URL`)                       | per pool index            | tier-based, see below      | `RPC_RATE_LIMITS`, `RPC_SEND_TX_RATE_LIMITS` |
+| `getTokenLargestAccounts` / `getProgramAccounts` | single slot               | 1 in flight, 300 ms gap    | —                                            |
 
 ---
 
 ## Jupiter
 
-| Tier           | Limit                 | Notes                                                      |
-| -------------- | --------------------- | ---------------------------------------------------------- |
-| Free (default) | ~10 req/s per account | Shared across ALL calls from the same account, not per key |
-| Paid           | Higher RPS            | See https://developers.jup.ag/docs/portal/rate-limits      |
+- **Free tier: 1 req/s (60/min, sliding window) per organisation**, not per key. Price, Tokens
+  and Swap requests all share that bucket. Only `/swap/v2/execute` has its own (50 req/s).
+  Source: developers.jup.ag/docs/api-rate-limit.
+- **Keys and priorities:**
+  - `JUPITER_API_KEY` covers discovery: the recent and trending feeds and scan-path prices, at
+    `LOW` priority.
+  - `JUPITER_POSITION_API_KEY` covers monitor prices (`HIGH`), SOL/USD accounting (`MEDIUM`), and
+    swap orders and SDK quotes (`ULTRA_HIGH`).
+- **Two keys from the same Jupiter organisation still share one upstream limit.** Locally they
+  get separate buckets, so set `JUPITER_RPS` to your plan's rate divided by the number of keys.
+  For truly isolated budgets, use a key from a second organisation.
+- **Circuit breakers:** there are two, `jupiterDiscoveryBreaker` and `jupiterPositionBreaker`,
+  so discovery failures never suppress position pricing.
+  - Three consecutive failures open a breaker for 60 s.
+  - A 429 opens it immediately for 30 s.
+  - After the cooldown, a single probe call decides whether it closes.
+  - While a breaker is open, prices come from on-chain curve reads.
+- **Retries:**
+  - `/swap/v2/order` is retried once.
+  - `/swap/v2/execute` is **never** auto-retried, because a signed transaction can still land
+    after a timeout.
+  - Price and feed calls use `retries: 0`.
 
-**Critical:** Jupiter rate-limits per **account**, not per API key. Creating extra keys from the same account does NOT increase the limit.
+## RugCheck
 
-**Bot usage:**
+The free account key allows 60 req/min, so the bucket runs at 1 req/s. The token report and
+wallet-risk checks share that budget and use `retries: 0`.
 
-- Discovery: price fetches + token lookups + swap quotes
-- Monitor: position price fetches (every `scanIntervalMs`, one per open position)
-- Exit sells: swap quotes + transaction builds (latency-critical — a 429 here drops the exit)
-
-**429 behavior (position price calls):** `jupiterPriceCooldownUntil` (or `jupiterPositionPriceCooldownUntil` for the position key) is set for ~30s. Bot leans on on-chain price fallback during the cooldown. Exit sells are not retried — a 429 on an exit drops it silently.
-
-**Recommendation:** Register a **second Jupiter account** and set `JUPITER_POSITION_API_KEY` to isolate monitor/exit calls from discovery. This is the only free fix — separate accounts = separate rate-limit buckets.
-
-| Key                        | Used for                                             |
-| -------------------------- | ---------------------------------------------------- |
-| `JUPITER_API_KEY`          | Discovery scans, trending feed, market price fetches |
-| `JUPITER_POSITION_API_KEY` | Position monitor price fetches, exit swap builds     |
-
----
+On a failure, `fetchRugCheckSignals` returns `status: 'error'`. The engine then continues with
+on-chain mint, freeze and concentration signals only.
 
 ## BubbleMaps
 
-| Tier | Limit                                       | Notes                                  |
-| ---- | ------------------------------------------- | -------------------------------------- |
-| Free | Not publicly listed; de-facto ~5–10 req/min | Often rate-limited or requires API key |
-| Paid | Per plan                                    | See https://bubblemaps.io              |
+BubbleMaps is optional and only used when `BUBBLEMAPS_API_KEY` is set. It has no published
+limit, so the bucket defaults to 6 req/min. Calls use a 2 s timeout and `retries: 0`. On a
+timeout or error, the on-chain top-5 concentration fallback applies.
 
-**Bot usage per token:** 1 call to `/maps/solana/{mint}` (heavy audit). Wrapped in a 2-second `Promise.race` — if BubbleMaps doesn't respond within 2s the call is abandoned and the bot falls back to the on-chain top5 threshold (`maxTokenAccountTop5Pct - 10`).
+## Jito block engine
 
-**429 / timeout behavior:** Treated as soft failure. On-chain top5 fallback kicks in with a tighter `-10%` threshold (`bubblemaps-fail-safe-concentration` blocker). No retry.
-
-**Recommendation:** BubbleMaps is optional. If absent (`BUBBLEMAPS_API_KEY` unset), the on-chain fallback runs unconditionally. Only add BubbleMaps if you have a paid key and need the clustering signal.
-
----
+The default limit is **1 req/s per IP per region**, for all methods (docs.jito.wtf). `sendBundle`
+(`ULTRA_HIGH`), `getBundleStatuses` (`MEDIUM`) and the tip floor (`LOW`) share the `jito`
+bucket. `sendBundle` uses `retries: 0`: the executor's own attempt loop rebuilds and resends.
 
 ## Solana RPC
 
-No hard external rate limit — depends entirely on the RPC provider and plan. The bot implements adaptive backpressure internally:
+`rpcCall` (`src/core/utils/solana.ts`) keeps one bucket per `RPC_URL` entry. The tier is
+auto-detected or set with `RPC_TIER=premium,free`:
 
-- `BACKPRESSURE_ERROR_RATE_THRESHOLD` (default 0.30): if >30% of recent RPC calls fail, concurrency is reduced by `PARALLELISM_MIN_FACTOR`
-- `ERROR_RATE_WINDOW` (default 20): rolling window size for the error rate calculation
-- `MINT_SIGNAL_MAX_ATTEMPTS` / `MINT_SIGNAL_RETRY_DELAY_MS`: retry budget for mint account lookups
-- `RPC_INDEXING_RETRY_DELAY_MS`: wait before retrying on RPC indexing lag (token not yet confirmed)
+| Tier                    | Default               |
+| ----------------------- | --------------------- |
+| public/free             | ≈5 req/s, 1 sendTx/s  |
+| Helius Free and similar | ≈10 req/s, 1 sendTx/s |
 
-**Recommendation:** Use a dedicated Solana RPC node (Helius, QuickNode, Alchemy) rather than public nodes. Public nodes apply aggressive rate limits that will interfere with heavy-audit parallelism.
+Override them with `RPC_RATE_LIMITS` (e.g. `50,5`) and `RPC_SEND_TX_RATE_LIMITS`.
 
-**Internal rate limiting:** `rpcCall` gates outbound requests with a per-endpoint priority token bucket (10 req/s + 1 tx/s **per RPC_URL entry**, `src/core/utils/solana.ts`). Because buckets are keyed per pool index, **adding a second independent endpoint to `RPC_URL` raises aggregate throughput** (2 endpoints ≈ 20 req/s) in addition to giving `rpcCall` a healthy node to rotate to on a 429. Caveat: the two endpoints must have genuinely independent limits — listing the same provider/key twice issues 2× the rate against one key and earns 429s. Scan-path curve reads run at `LOW` priority so they yield the bucket to monitor/exit reads and buys.
+- **Sharding:** `HIGH`, `ULTRA_HIGH` and `MEDIUM` calls prefer premium endpoints; `LOW` calls
+  (scans, discovery `getTransaction`) prefer free ones.
+- **Multiple endpoints:** only list endpoints with independent limits. The same key listed twice
+  will 429.
+- **429 handling:** a 429 penalizes that endpoint's bucket for 30 s and rotates the call to
+  another healthy endpoint.
+- **Quarantine:** an endpoint with 3 consecutive errors is skipped for 60 s.
+- **Single-flight reads:** identical cacheable reads (`cacheTtlMs > 0`) share one in-flight
+  request. The response cache holds at most 5,000 entries.
 
-**WebSocket Failover & Rotation:** The bot supports automatic WebSocket rotation for log discovery. If log subscriptions for tracked programs (pump.fun, Raydium, Meteora) fail to connect 3 times consecutively (e.g., due to rate limits or intermittent endpoint outages), the discovery service automatically rotates the active WebSocket connection to the next URL in the pool. To take full advantage of this, it is recommended to leave `WS_RPC_URL` blank so the bot can automatically derive a list of fallback WebSocket URLs from the `RPC_URL` endpoints.
+### Heavy methods (`getTokenLargestAccounts`, `getProgramAccounts`)
 
-**Burst mode requires a premium RPC.** Standard mode prices most tokens via Jupiter and barely touches the node. Burst mode targets fresh pump.fun mints that Jupiter cannot price, so 100% of pricing falls onto on-chain `getMultipleAccounts` bonding-curve reads (`batchFetchDirectMarketData`). Combined with burst's tight survival/recheck cadence, this bursts curve reads past what a public/free node allows per second — observed as repeated `getMultipleAccounts ... HTTP error (429)` and `Batch on-chain price fetch failed: 429`. A premium dedicated node absorbs this; a public node does not. If you must run burst on a tighter node, add independent comma-separated endpoints in `RPC_URL` to widen the aggregate bucket and let `rpcCall` rotate off a 429'd endpoint.
+> [!CAUTION]
+> Do not remove this pacing. Providers cap these methods at 2–5 req/s, and unpaced bursts cause
+> 429 retry storms that stall the scan loop for 15–20 s.
 
----
+- `withHeavySlot` allows **one heavy call in flight**. The slot is held until the call settles,
+  and the next call starts at least 300 ms later.
+- The request timeout starts when the call is sent, not while it is queued for the slot.
+- **One retry budget per call.** The on-chain auditor calls `rpcCall` with `maxAttempts: 1`
+  inside its own `MINT_SIGNAL_MAX_ATTEMPTS` loop, which also absorbs RPC indexing lag. Nested
+  loops of 3 × 3 = 9 retries are gone.
 
-## Jito Block Engine
+## WebSockets
 
-No hard rate limit on bundle submission for normal usage. The `JITO_CONFIRM_TIMEOUT_MS` (default 30s) and `JITO_BUNDLE_RETRY_ATTEMPTS` (default 3) control retries on unconfirmed bundles. Tip floor is fetched once per bundle via `getTipFloor` — not rate-limited in practice.
+When a log subscription or the heartbeat fails, it reconnects with exponential backoff and ±20%
+jitter (5 s → 60 s cap). The backoff resets once the stream delivers an event. After three
+consecutive failures the subscription pool rotates to the next WebSocket URL. Leave `WS_RPC_URL`
+blank to derive one URL per `RPC_URL` entry.
 
----
+## Secrets in logs
 
-## Summary Table
-
-| API                     | Hard limit            | 429 on exit?               | Mandatory?                     |
-| ----------------------- | --------------------- | -------------------------- | ------------------------------ |
-| RugCheck                | 60 req/min (free key) | No (soft fail)             | **Yes**                        |
-| Jupiter (discovery)     | ~10 req/s / account   | N/A                        | Yes                            |
-| Jupiter (position/exit) | ~10 req/s / account   | **Yes — exits dropped**    | Recommended                    |
-| BubbleMaps              | ~5–10 req/min         | No (2s timeout + fallback) | No                             |
-| Solana RPC              | Provider-dependent    | No (backpressure)          | Yes                            |
-| Jito                    | Generous              | No                         | No (USE_JITO=false to disable) |
+`redactUrl` scrubs every fetch and RPC error message before it is thrown or logged. It removes
+query strings, Telegram `/bot<token>`, Discord webhook tokens and `api-key=` values.

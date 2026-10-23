@@ -1,4 +1,5 @@
 import { EvaluationResult } from '#types/index.js';
+import { calcPriceConsistency } from '../services/engine/scoring.js';
 
 export const FEATURE_DIM = 18;
 
@@ -52,14 +53,7 @@ export function extractFeatures(evalResult: EvaluationResult): Float32Array {
   }
 
   // Consistency ratio: fraction of price steps that were positive
-  let consistencyRatio = 0.5;
-  if (Array.isArray(ph) && ph.length >= 3) {
-    let green = 0;
-    for (let i = 1; i < ph.length; i++) {
-      if ((ph[i]?.price ?? 0) > (ph[i - 1]?.price ?? 0)) green++;
-    }
-    consistencyRatio = green / (ph.length - 1);
-  }
+  const consistencyRatio = calcPriceConsistency(ph as { price: number }[], 0.5);
 
   // FDV per holder — a concentration signal: high value means few holders relative to market cap
   const fdvPerHolder = safeLog1p(holderCount > 0 ? fdv / holderCount : fdv);
@@ -118,10 +112,10 @@ export function extractFeatures(evalResult: EvaluationResult): Float32Array {
 export function normalizeFeatures(raw: Float32Array, stats: NormStats): Float32Array {
   const out = new Float32Array(FEATURE_DIM);
   for (let i = 0; i < FEATURE_DIM; i++) {
-    const s = f32Get(stats.std, i);
-    const m = f32Get(stats.mean, i);
-    const r = f32Get(raw, i);
-    f32Set(out, i, s > 1e-8 ? (r - m) / s : r);
+    const s = stats.std[i] ?? 0;
+    const m = stats.mean[i] ?? 0;
+    const r = raw[i] ?? 0;
+    out[i] = s > 1e-8 ? (r - m) / s : r;
   }
   return out;
 }
@@ -130,13 +124,6 @@ export function normalizeFeatures(raw: Float32Array, stats: NormStats): Float32A
  * Computes mean and std across a collection of raw feature vectors.
  * Requires at least 2 samples; returns zero-mean unit-std stats if fewer.
  */
-function f32Get(arr: Float32Array, i: number): number {
-  return (arr as unknown as number[])[i] ?? 0;
-}
-
-function f32Set(arr: Float32Array, i: number, v: number): void {
-  (arr as unknown as number[])[i] = v;
-}
 
 export function computeNormStats(samples: Float32Array[]): NormStats {
   const mean = new Float32Array(FEATURE_DIM);
@@ -151,20 +138,20 @@ export function computeNormStats(samples: Float32Array[]): NormStats {
 
   for (const s of samples) {
     for (let i = 0; i < FEATURE_DIM; i++) {
-      f32Set(mean, i, f32Get(mean, i) + f32Get(s, i) / samples.length);
+      mean[i] = (mean[i] ?? 0) + (s[i] ?? 0) / samples.length;
     }
   }
 
   for (const s of samples) {
     for (let i = 0; i < FEATURE_DIM; i++) {
-      const diff = f32Get(s, i) - f32Get(mean, i);
-      f32Set(std, i, f32Get(std, i) + (diff * diff) / (samples.length - 1));
+      const diff = (s[i] ?? 0) - (mean[i] ?? 0);
+      std[i] = (std[i] ?? 0) + (diff * diff) / (samples.length - 1);
     }
   }
 
   for (let i = 0; i < FEATURE_DIM; i++) {
-    const v = Math.sqrt(f32Get(std, i));
-    f32Set(std, i, v < 1e-8 ? 1 : v);
+    const v = Math.sqrt(std[i] ?? 0);
+    std[i] = v < 1e-8 ? 1 : v;
   }
 
   return { mean, std };

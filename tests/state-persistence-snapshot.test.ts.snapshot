@@ -1,0 +1,490 @@
+exports[`state persistence round-trip: empty state matches default state 1`] = `
+{
+  "closedTrades": [],
+  "coolDownMints": [],
+  "marketSnapshots": [],
+  "metrics": {
+    "boughtPositions": 0,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "candidateDiscoveries": 0,
+    "cheapGatePasses": 0,
+    "consecutiveJupiterFailures": 0,
+    "deepAuditCandidates": 0,
+    "discoveredCandidates": 0,
+    "exitReasonCounts": {},
+    "externalPriceFallbacks": 0,
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "getMultipleAccountsRequests": 0,
+    "getTokenLargestAccountsRequests": 0,
+    "invalidMintSkips": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 0,
+    "jupiterDiscoveryTimeouts": 0,
+    "jupiterPriceRequests": 0,
+    "jupiterSuppressedRequests": 0,
+    "localMarketMisses": 0,
+    "localMarketReads": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 0,
+    "passedCheapAudit": 0,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {},
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "tokenAccountInitializations": 0,
+    "tokenLargest429s": 0,
+    "tokenLargestFallbacks": 0,
+    "tokenLargestInitializations": 0,
+    "trailingExits": 0
+  },
+  "paperSolBalanceLamports": "100000000",
+  "pendingCandidateRechecks": [],
+  "positions": [],
+  "processedMints": [],
+  "retiredMints": [],
+  "tradeHistory": []
+}
+`;
+
+exports[`state persistence round-trip: empty state matches default state 2`] = `
+{
+  "closedTrades": [],
+  "coolDownMints": [],
+  "marketSnapshots": [],
+  "metrics": {
+    "boughtPositions": 0,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "candidateDiscoveries": 0,
+    "cheapGatePasses": 0,
+    "consecutiveJupiterFailures": 0,
+    "deepAuditCandidates": 0,
+    "discoveredCandidates": 0,
+    "exitReasonCounts": {},
+    "externalPriceFallbacks": 0,
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "getMultipleAccountsRequests": 0,
+    "getTokenLargestAccountsRequests": 0,
+    "invalidMintSkips": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 0,
+    "jupiterDiscoveryTimeouts": 0,
+    "jupiterPriceRequests": 0,
+    "jupiterSuppressedRequests": 0,
+    "localMarketMisses": 0,
+    "localMarketReads": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 0,
+    "passedCheapAudit": 0,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {},
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "tokenAccountInitializations": 0,
+    "tokenLargest429s": 0,
+    "tokenLargestFallbacks": 0,
+    "tokenLargestInitializations": 0,
+    "trailingExits": 0
+  },
+  "paperSolBalanceLamports": "100000000",
+  "pendingCandidateRechecks": [],
+  "positions": [],
+  "processedMints": [],
+  "retiredMints": [],
+  "tradeHistory": []
+}
+`;
+
+exports[`state persistence round-trip: persisted fields match after DB reload 1`] = `
+{
+  "closedTrades": [
+    {
+      "closedAt": "2024-01-01T01:00:00.000Z",
+      "entryLiquidityUsd": 5000,
+      "entryPriceUsd": 0.001,
+      "entryScore": 80,
+      "entryUsdValue": 100,
+      "exitPriceUsd": 0.0015,
+      "exitReason": "take-profit",
+      "highestPriceUsd": 0.002,
+      "holdSeconds": 3600,
+      "maxHoldMinutesResolved": 20,
+      "mint": "ClosedMint1",
+      "realizedPnlSol": 0.025,
+      "realizedPnlUsd": 50,
+      "realizedProceedsUsd": 150,
+      "symbol": "CLS",
+      "targetsHit": 0,
+      "trailingStopDrawdownPctResolved": 0.16,
+      "volatilityScaler": 1
+    }
+  ],
+  "coolDownMints": [
+    [
+      "CooldownMint1",
+      {
+        "expiresAt": 1700000300000,
+        "lastExitPriceUsd": 0.001
+      }
+    ]
+  ],
+  "marketSnapshots": [
+    [
+      "SnapMint1",
+      {
+        "launchpad": "pump.fun",
+        "liquidity": 5000,
+        "observedAt": "2024-01-01T00:00:00.000Z",
+        "usdPrice": 0.001
+      }
+    ]
+  ],
+  "metrics": {
+    "boughtPositions": 1,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "candidateDiscoveries": 0,
+    "cheapGatePasses": 0,
+    "consecutiveJupiterFailures": 0,
+    "deepAuditCandidates": 0,
+    "discoveredCandidates": 5,
+    "exitReasonCounts": {},
+    "externalPriceFallbacks": 0,
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "getMultipleAccountsRequests": 0,
+    "getTokenLargestAccountsRequests": 0,
+    "invalidMintSkips": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 0,
+    "jupiterDiscoveryTimeouts": 0,
+    "jupiterPriceRequests": 0,
+    "jupiterSuppressedRequests": 0,
+    "localMarketMisses": 0,
+    "localMarketReads": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 2,
+    "passedCheapAudit": 3,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {
+      "low-liquidity": 1
+    },
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "tokenAccountInitializations": 0,
+    "tokenLargest429s": 0,
+    "tokenLargestFallbacks": 0,
+    "tokenLargestInitializations": 0,
+    "trailingExits": 0
+  },
+  "paperSolBalanceLamports": "1000000000",
+  "pendingCandidateRechecks": [
+    [
+      "RecheckMint1",
+      {
+        "auditAttempts": 1,
+        "basePriceUsd": 0.001,
+        "isSurvivalWait": false,
+        "mint": "RecheckMint1",
+        "nextEligibleAt": "2023-11-14T22:13:50.000Z",
+        "reason": "low-liquidity",
+        "scheduledTime": 1700000030000,
+        "tokenSnapshot": {
+          "id": "RecheckMint1",
+          "liquidity": 5000,
+          "name": "Recheck Token",
+          "symbol": "RCK",
+          "usdPrice": 0.001
+        }
+      }
+    ]
+  ],
+  "positions": [
+    {
+      "decimals": 9,
+      "entryLiquidityUsd": 5000,
+      "entryPriceUsd": 0.001,
+      "entryScore": 85,
+      "entryUsdValue": 100,
+      "highestPriceUsd": 0.002,
+      "initialTokenAmountRaw": "100000000",
+      "launchpad": "pump.fun",
+      "maxHoldMinutesResolved": 20,
+      "mint": "PositionMint1",
+      "mode": "paper",
+      "moonBagRaw": "5000000",
+      "name": "Position Token",
+      "openedAt": "2024-01-01T00:00:00.000Z",
+      "partiallyClosed": false,
+      "symbol": "POS",
+      "takeProfitFractions": [
+        0.75,
+        0.6
+      ],
+      "takeProfitMultiples": [
+        1.15,
+        1.75
+      ],
+      "targetsHit": 0,
+      "tpProfile": "low-confidence",
+      "trailingStopDrawdownPctResolved": 0.16,
+      "volatilityScaler": 1
+    }
+  ],
+  "processedMints": [
+    "TrackedMint1",
+    "TrackedMint2"
+  ],
+  "retiredMints": [
+    [
+      "RetiredMint1",
+      {
+        "reason": "rug-pull",
+        "retiredAt": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  ],
+  "tradeHistory": []
+}
+`;
+
+exports[`state persistence round-trip: persisted fields match after DB reload 2`] = `
+{
+  "closedTrades": [
+    {
+      "closedAt": "2024-01-01T01:00:00.000Z",
+      "entryLiquidityUsd": 5000,
+      "entryPriceUsd": 0.001,
+      "entryScore": 80,
+      "entryUsdValue": 100,
+      "exitPriceUsd": 0.0015,
+      "exitReason": "take-profit",
+      "highestPriceUsd": 0.002,
+      "holdSeconds": 3600,
+      "maxHoldMinutesResolved": 20,
+      "mint": "ClosedMint1",
+      "realizedPnlSol": 0.025,
+      "realizedPnlUsd": 50,
+      "realizedProceedsUsd": 150,
+      "symbol": "CLS",
+      "targetsHit": 0,
+      "trailingStopDrawdownPctResolved": 0.16,
+      "volatilityScaler": 1
+    }
+  ],
+  "coolDownMints": [
+    [
+      "CooldownMint1",
+      {
+        "expiresAt": 1700000300000,
+        "lastExitPriceUsd": 0.001
+      }
+    ]
+  ],
+  "marketSnapshots": [
+    [
+      "SnapMint1",
+      {
+        "launchpad": "pump.fun",
+        "liquidity": 5000,
+        "observedAt": "2024-01-01T00:00:00.000Z",
+        "usdPrice": 0.001
+      }
+    ]
+  ],
+  "metrics": {
+    "boughtPositions": 1,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "candidateDiscoveries": 0,
+    "cheapGatePasses": 0,
+    "consecutiveJupiterFailures": 0,
+    "deepAuditCandidates": 0,
+    "discoveredCandidates": 5,
+    "exitReasonCounts": {},
+    "externalPriceFallbacks": 0,
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "getMultipleAccountsRequests": 0,
+    "getTokenLargestAccountsRequests": 0,
+    "invalidMintSkips": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 0,
+    "jupiterDiscoveryTimeouts": 0,
+    "jupiterPriceRequests": 0,
+    "jupiterSuppressedRequests": 0,
+    "localMarketMisses": 0,
+    "localMarketReads": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 2,
+    "passedCheapAudit": 3,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {
+      "low-liquidity": 1
+    },
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "tokenAccountInitializations": 0,
+    "tokenLargest429s": 0,
+    "tokenLargestFallbacks": 0,
+    "tokenLargestInitializations": 0,
+    "trailingExits": 0
+  },
+  "paperSolBalanceLamports": "1000000000",
+  "pendingCandidateRechecks": [
+    [
+      "RecheckMint1",
+      {
+        "auditAttempts": 1,
+        "basePriceUsd": 0.001,
+        "isSurvivalWait": false,
+        "mint": "RecheckMint1",
+        "nextEligibleAt": "2023-11-14T22:13:50.000Z",
+        "reason": "low-liquidity",
+        "scheduledTime": 1700000030000,
+        "tokenSnapshot": {
+          "id": "RecheckMint1",
+          "liquidity": 5000,
+          "name": "Recheck Token",
+          "symbol": "RCK",
+          "usdPrice": 0.001
+        }
+      }
+    ]
+  ],
+  "positions": [
+    {
+      "decimals": 9,
+      "entryLiquidityUsd": 5000,
+      "entryPriceUsd": 0.001,
+      "entryScore": 85,
+      "entryUsdValue": 100,
+      "highestPriceUsd": 0.002,
+      "initialTokenAmountRaw": "100000000",
+      "launchpad": "pump.fun",
+      "maxHoldMinutesResolved": 20,
+      "mint": "PositionMint1",
+      "mode": "paper",
+      "moonBagRaw": "5000000",
+      "name": "Position Token",
+      "openedAt": "2024-01-01T00:00:00.000Z",
+      "partiallyClosed": false,
+      "symbol": "POS",
+      "takeProfitFractions": [
+        0.75,
+        0.6
+      ],
+      "takeProfitMultiples": [
+        1.15,
+        1.75
+      ],
+      "targetsHit": 0,
+      "tpProfile": "low-confidence",
+      "trailingStopDrawdownPctResolved": 0.16,
+      "volatilityScaler": 1
+    }
+  ],
+  "processedMints": [
+    "TrackedMint1",
+    "TrackedMint2"
+  ],
+  "retiredMints": [
+    [
+      "RetiredMint1",
+      {
+        "reason": "rug-pull",
+        "retiredAt": "2024-01-01T00:00:00.000Z"
+      }
+    ]
+  ],
+  "tradeHistory": []
+}
+`;
+
+exports[`state persistence snapshot: SQLite schema and row counts 1`] = `
+{
+  "rowCounts": {
+    "closed_trades": 1,
+    "cooldowns": 1,
+    "kv_store": 5,
+    "launch_history": 0,
+    "metrics": 1,
+    "ml_training_samples": 0,
+    "positions": 1,
+    "processed_mints": 2,
+    "rechecks": 1,
+    "retired_mints": 1,
+    "snapshots": 1,
+    "sqlite_sequence": 1
+  },
+  "tableNames": [
+    "closed_trades",
+    "cooldowns",
+    "kv_store",
+    "launch_history",
+    "metrics",
+    "ml_training_samples",
+    "positions",
+    "processed_mints",
+    "rechecks",
+    "retired_mints",
+    "snapshots",
+    "sqlite_sequence"
+  ]
+}
+`;

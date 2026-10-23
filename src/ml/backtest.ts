@@ -2,19 +2,19 @@
  * @module Backtest
  * Offline entry-decision evaluation harness.
  *
- * Trains an {@link EnsembleModel} on the older portion of recorded
+ * Trains an {@link ModelBucket} on the older portion of recorded
  * {@link TrainingSample}s and evaluates it on the newer (held-out) portion —
  * a walk-forward split that avoids lookahead. It then reports how well the
  * model's confidence separates winners from losers (AUC, precision/recall) and
  * what gating on each candidate `mlScoreGateThreshold` would have done to
  * realized PnL versus the rule-only baseline (admit everything).
  *
- * The scoring path reuses {@link EnsembleModel.predict} with a zero threshold,
+ * The scoring path reuses {@link ModelBucket.predict} with a zero threshold,
  * so confidences come from exactly the code the live bot runs.
  */
 
 import { TrainingSample } from '#types/index.js';
-import { EnsembleModel } from './ensemble-model.js';
+import { ModelBucket } from './model-bucket.js';
 import { buildSequenceFromJson } from './sequence-features.js';
 import {
   BacktestOptions,
@@ -46,7 +46,7 @@ export function splitWalkForward(
  * threshold so `predict` never blocks and never trips the circuit breaker —
  * we only want the raw blended confidence.
  */
-export function scoreSamples(model: EnsembleModel, samples: TrainingSample[]): ScoredSample[] {
+export function scoreSamples(model: ModelBucket, samples: TrainingSample[]): ScoredSample[] {
   return samples.map((s) => {
     const features = new Float32Array(JSON.parse(s.featuresJson) as number[]);
     const sequence = buildSequenceFromJson(s.sequenceJson);
@@ -194,7 +194,7 @@ export async function runEntryBacktest(
   const { train, evaluation } = splitWalkForward(working, trainFraction);
   if (train.length < minSamples || evaluation.length === 0) return null;
 
-  const model = new EnsembleModel(minSamples);
+  const model = new ModelBucket(minSamples);
   await model.train(train);
 
   const scored = scoreSamples(model, evaluation);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { RlExitOptimizer } from '../src/ml/rl-exit-optimizer.js';
-import { createRlPolicy, isNativeAvailable } from '../src/ml/native.js';
+import { createRlPolicy, isNativeAvailable } from '../src/ml/models/factory.js';
 import { FEATURE_DIM } from '../src/ml/features.js';
 import { Config, TrainingSample } from '../src/types/index.js';
 

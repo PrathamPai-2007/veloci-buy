@@ -36,6 +36,8 @@ interface ClosedTrade {
   closedAt: string;
   entryScore: number;
   initialBuyAmountSol: string | number | null;
+  isGhost?: boolean;
+  mode?: string;
 }
 
 function readJsonl<T>(filePath: string): T[] {
@@ -67,13 +69,28 @@ export function generatePnlReport(sessionDir: string): string {
   const tradeJournalPath = path.join(sessionDir, 'trade-journal.jsonl');
   const paperJournalPath = path.join(sessionDir, 'paper-trade-journal.jsonl');
 
-  const liveTrades = readJsonl<ClosedTrade>(tradeJournalPath);
-  const paperEvents = readJsonl<TradeEvent>(paperJournalPath);
+  const rawLiveTrades = readJsonl<ClosedTrade>(tradeJournalPath);
+  // Ghost trades are stored separately (ghost-trade-journal.jsonl) but old journals may mix — filter here.
+  const liveTrades = rawLiveTrades.filter(
+    (t) =>
+      !(t as unknown as { isGhost?: boolean }).isGhost &&
+      (t as unknown as { mode?: string }).mode !== 'ghost'
+  );
+  const paperEventsRaw = readJsonl<TradeEvent>(paperJournalPath);
+  // Filter ghost paper events (should never be there, but guard)
+  const paperEvents = paperEventsRaw.filter(
+    (e) =>
+      (e as unknown as { isGhost?: boolean }).isGhost !== true &&
+      (e as unknown as { mode?: string }).mode !== 'ghost'
+  );
 
   const allClosedTrades: ClosedTrade[] = [...liveTrades];
+  // Dedup key is mint+closedAt (not just mint) so relaunched same symbol or duplicate bug doesn't collapse distinct trades but still catches exact duplicates.
+  const closedKeys = new Set(liveTrades.map((trade) => `${trade.mint}:${trade.closedAt}`));
+  const closedMintsLegacy = new Set(liveTrades.map((t) => t.mint));
 
-  // Fallback: reconstruct from paper events only when trade-journal is absent/empty
-  if (allClosedTrades.length === 0 && paperEvents.length > 0) {
+  // Add paper-only closed trades without duplicating records already in trade-journal.
+  if (paperEvents.length > 0) {
     const byMint = new Map<string, TradeEvent[]>();
     for (const ev of paperEvents) {
       if (!byMint.has(ev.mint)) byMint.set(ev.mint, []);
@@ -81,40 +98,91 @@ export function generatePnlReport(sessionDir: string): string {
     }
 
     for (const [mint, events] of byMint) {
-      const buy = events.find((e) => e.event === 'buy');
-      const last = events[events.length - 1];
-      // ponytail: only reconstruct fully-closed positions; partial TP sells are not exits
-      if (buy && last && last.event === 'close') {
-        const realizedPnlUsd = events.reduce((sum, e) => sum + (e.realizedPnlUsd || 0), 0);
-        const realizedPnlSol = events.reduce((sum, e) => sum + (e.realizedPnlSol || 0), 0);
-        const realizedProceedsUsd = events.reduce((sum, e) => sum + (e.proceedsUsd || 0), 0);
-        const realizedProceedsSol = events.reduce((sum, e) => sum + (e.proceedsSol || 0), 0);
+      // Dedup identical paper close events (duplicate rug→SL bug with same outAmount/proceeds within 60s)
+      const uniqueCloses: TradeEvent[] = [];
+      const seenOut = new Set<string>();
+      for (const ev of events) {
+        if (ev.event !== 'close' && ev.event !== 'sell') {
+          uniqueCloses.push(ev);
+          continue;
+        }
+        const key = `${ev.tokenAmount ?? ''}:${ev.proceedsSol ?? ''}:${ev.proceedsUsd ?? ''}`;
+        // Only dedup consecutive duplicate closes with identical proceeds within short window
+        const last = uniqueCloses[uniqueCloses.length - 1];
+        if (last && last.event === 'close' && ev.event === 'close' && seenOut.has(key)) {
+          // duplicate — skip double-counting
+          continue;
+        }
+        seenOut.add(key);
+        uniqueCloses.push(ev);
+      }
+      const buy = uniqueCloses.find((e) => e.event === 'buy');
+      const last = uniqueCloses[uniqueCloses.length - 1];
+      if (!buy || !last || last.event !== 'close') continue;
+      const closedKey = `${mint}:${last.timestamp}`;
+      if (closedKeys.has(closedKey) || closedMintsLegacy.has(mint)) {
+        // Already covered in trade-journal (legacy mint-only check keeps old single-trade-per-mint journals correct)
+        // Use key-based check for ghost-fixed journals
+        if (closedKeys.has(closedKey)) continue;
+        // If legacy journal had this mint, skip reconstruction to avoid double count
+        continue;
+      }
+      // Fix absurd SOL PnL: if realizedPnlSol == proceedsSol while USD is negative, it's missing cost. Derive via USD/solPrice.
+      const rawPnlUsd = uniqueCloses.reduce((sum, e) => sum + (e.realizedPnlUsd || 0), 0);
+      let rawPnlSol = uniqueCloses.reduce((sum, e) => sum + (e.realizedPnlSol || 0), 0);
+      const realizedProceedsUsd = uniqueCloses.reduce((sum, e) => sum + (e.proceedsUsd || 0), 0);
+      const realizedProceedsSol = uniqueCloses.reduce((sum, e) => sum + (e.proceedsSol || 0), 0);
+      if (
+        Math.abs(rawPnlSol - realizedProceedsSol) < 1e-9 &&
+        rawPnlUsd < 0 &&
+        realizedProceedsSol > 0 &&
+        realizedProceedsUsd > 0
+      ) {
+        const solPrice = realizedProceedsUsd / realizedProceedsSol;
+        rawPnlSol = solPrice > 0 ? rawPnlUsd / solPrice : 0;
+      } else if (
+        Math.abs(rawPnlSol - realizedProceedsSol) < 1e-9 &&
+        rawPnlUsd < 0 &&
+        realizedProceedsSol > 0
+      ) {
+        rawPnlSol = 0;
+      }
 
-        allClosedTrades.push({
-          mint,
-          symbol: buy.symbol,
-          exitReason: last.reason || 'unknown',
-          realizedPnlUsd,
-          realizedPnlSol,
-          realizedProceedsUsd,
-          realizedProceedsSol,
-          entryPriceUsd: buy.priceUsd,
-          entryPriceSol: buy.priceSol || 0,
-          closedAt: last.timestamp,
-          entryUsdValue: realizedProceedsUsd - realizedPnlUsd,
-          highestPriceUsd: events.reduce((m, e) => Math.max(m, e.priceUsd), 0),
-          holdSeconds:
-            (new Date(last.timestamp).getTime() - new Date(buy.timestamp).getTime()) / 1000,
-          entryScore: 0,
-          initialBuyAmountSol: buy.solAmount || null,
-        });
+      allClosedTrades.push({
+        mint,
+        symbol: buy.symbol,
+        exitReason: last.reason || 'unknown',
+        realizedPnlUsd: rawPnlUsd,
+        realizedPnlSol: rawPnlSol,
+        realizedProceedsUsd,
+        realizedProceedsSol,
+        entryPriceUsd: buy.priceUsd,
+        entryPriceSol: buy.priceSol || 0,
+        closedAt: last.timestamp,
+        entryUsdValue: realizedProceedsUsd - rawPnlUsd,
+        highestPriceUsd: uniqueCloses.reduce((m, e) => Math.max(m, e.priceUsd ?? 0), 0),
+        holdSeconds:
+          (new Date(last.timestamp).getTime() - new Date(buy.timestamp).getTime()) / 1000,
+        entryScore: 0,
+        initialBuyAmountSol: buy.solAmount || null,
+      });
+      closedKeys.add(closedKey);
+      closedMintsLegacy.add(mint);
+    }
+  }
+
+  // Correct absurd SOL PnL on legacy journal entries (proceeds-as-PnL) before aggregating — derive via USD
+  for (const t of allClosedTrades) {
+    if (t.realizedPnlSol != null && t.realizedProceedsSol != null && t.realizedPnlUsd < 0) {
+      if (Math.abs(t.realizedPnlSol - t.realizedProceedsSol) < 1e-9 && t.realizedProceedsSol > 0) {
+        if (t.realizedProceedsUsd != null && t.realizedProceedsUsd > 0) {
+          const solPrice = t.realizedProceedsUsd / t.realizedProceedsSol;
+          t.realizedPnlSol = solPrice > 0 ? t.realizedPnlUsd / solPrice : 0;
+        } else {
+          t.realizedPnlSol = 0;
+        }
       }
     }
-  } else if (paperEvents.length > 0 && allClosedTrades.length > 0) {
-    safeConsole(
-      'log',
-      '[pnl-analyzer] paper-trade-journal exists but skipped — trade-journal has records'
-    );
   }
 
   let grossProfitUsd = 0;

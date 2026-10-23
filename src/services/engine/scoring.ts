@@ -1,6 +1,6 @@
-﻿/**
+/**
  * Pure scoring helpers for token candidate evaluation.
- * No ML, no burst overlay, no side-effects — safe to import anywhere.
+ * No ML, no side-effects — safe to import anywhere.
  */
 import { clamp } from '#core/utils.js';
 import {
@@ -36,6 +36,15 @@ export function maybeWarnClockSkew(ctx: Context, ageSeconds: number): void {
 
 /** Epoch ms when this process started; the starvation clock's baseline before any buy. */
 export const SESSION_START = Date.now();
+
+export function calcPriceConsistency(points: { price: number }[], fallback = 0.5): number {
+  if (!points || points.length < 2) return fallback;
+  let green = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i]!.price > points[i - 1]!.price) green++;
+  }
+  return green / (points.length - 1);
+}
 
 /**
  * Normalizes a potential numeric value, falling back to a default if invalid.
@@ -222,11 +231,7 @@ export function computeMomentumScore(
     const growth = currentPrice / startDelayPrice - 1;
     const growthScore = clamp(growth / MOMENTUM_SCORING.growthBandPct, -1, 1);
     const snaps = priceHistory.concat({ price: currentPrice, timestamp: Date.now() });
-    let green = 0;
-    for (let i = 1; i < snaps.length; i++) {
-      if (snaps[i]!.price > snaps[i - 1]!.price) green++;
-    }
-    const consistency = green / (snaps.length - 1);
+    const consistency = calcPriceConsistency(snaps);
     const traj = growthScore >= 0 ? growthScore * consistency : growthScore;
     delta += traj * MOMENTUM_SCORING.trajectoryMax;
   }
@@ -448,11 +453,7 @@ export function applyMomentumFilters(
 
   // Consistency Filter
   const snapshots = priceHistory.concat({ price: currentPrice, timestamp: now });
-  let greenSnapshots = 0;
-  for (let i = 1; i < snapshots.length; i++) {
-    if (snapshots[i]!.price > snapshots[i - 1]!.price) greenSnapshots++;
-  }
-  const consistencyRatio = greenSnapshots / (snapshots.length - 1);
+  const consistencyRatio = calcPriceConsistency(snapshots);
   const minConsistency =
     ctx.config.minMomentumConsistency ?? MOMENTUM_FILTERS.minMomentumConsistency;
   if (consistencyRatio < minConsistency) {

@@ -16,7 +16,6 @@ export const shutdownController = new AbortController();
 import * as keystore from './core/keystore.js';
 
 import { TuiService } from './services/tui.service.js';
-import { ApiService } from './services/api.service.js';
 import { Config, State, Context } from './types/index.js';
 
 // Enforce default max listeners for event-heavy environments
@@ -29,7 +28,6 @@ EventEmitter.defaultMaxListeners = 100;
  */
 
 let activeBot: VelociBuyBot | null = null;
-let apiService: ApiService | null = null;
 let globalShutdownInProgress = false;
 
 /**
@@ -57,10 +55,6 @@ const handleShutdown = async (sig: string): Promise<void> => {
     }
     process.exit(1);
   }, 20000).unref();
-
-  if (apiService) {
-    apiService.stop();
-  }
 
   if (activeBot) {
     activeBot.stop();
@@ -169,9 +163,6 @@ export async function main(): Promise<void> {
       tui.enable();
       activeBot.tui = tui;
     }
-
-    apiService = new ApiService(activeBot.getCtx());
-    apiService.start(config.apiPort);
 
     const runMode = config.paperTrading ? 'PAPER' : config.dryRun ? 'DRY-RUN' : 'LIVE';
     activeBot

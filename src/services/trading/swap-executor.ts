@@ -1,94 +1,38 @@
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
-import { address } from '@solana/addresses';
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   getBase64EncodedWireTransaction,
   getTransactionDecoder,
   partiallySignTransaction,
   signTransaction,
-  compileTransaction,
 } from '@solana/transactions';
-import { AccountRole } from '@solana/instructions';
-import {
-  createTransactionMessage,
-  setTransactionMessageFeePayer,
-  setTransactionMessageLifetimeUsingBlockhash,
-  appendTransactionMessageInstruction,
-} from '@solana/transaction-messages';
 import { createJupiterApiClient } from '@jup-ag/api';
-import bs58 from 'bs58';
 import { Context, SwapOrder, TipContext } from '#types/index.js';
 import {
   fetchJson,
   rpcCall,
   PRIORITY,
   safeJsonStringify,
-  sleep,
-  atomicToDecimalString,
+  getBucket,
+  jupiterRateLimit,
 } from '#core/utils.js';
 import { getWalletAddress } from './wallet-manager.js';
-import { getDynamicJitoTip, fetchDynamicPriorityFee } from './fee-manager.js';
+import { fetchDynamicPriorityFee } from './fee-manager.js';
 import { buildLocalSwapTransaction } from './local-router.js';
+export { startBlockhashPrewarmer, getBlockhash } from './execution/blockhash-prewarmer.js';
+export { confirmJitoBundle } from './execution/jito-executor.js';
+import { executeSwapOrderViaJito as executeSwapOrderViaJitoImpl } from './execution/jito-executor.js';
 
-// Rolling blockhash cache: refreshed every 300ms by startBlockhashPrewarmer.
-// A cached value younger than 350ms (< one slot) is safe to use, saving one
-// RPC round-trip on the critical panic-sell path.
-let _bh: { blockhash: string; lastValidBlockHeight: bigint; ts: number } | null = null;
-const BLOCKHASH_CACHE_TTL_MS = 350;
-
-export function startBlockhashPrewarmer(ctx: Context): ReturnType<typeof setInterval> {
-  return setInterval(() => {
-    void rpcCall(ctx, 'getLatestBlockhash', [{ commitment: 'confirmed' }], {
-      priority: PRIORITY.HIGH,
-    })
-      .then((r) => {
-        const v = (r as { value: { blockhash: string; lastValidBlockHeight: bigint | number } })
-          .value;
-        _bh = {
-          blockhash: v.blockhash,
-          lastValidBlockHeight: BigInt(v.lastValidBlockHeight),
-          ts: Date.now(),
-        };
-      })
-      .catch(() => {});
-  }, 300);
+/** Swaps are latency-critical (exits): position key, top priority in that key's bucket. */
+function swapApiKey(ctx: Context): string {
+  return ctx.config.jupiterPositionApiKey || ctx.config.jupiterApiKey;
 }
 
-export async function getBlockhash(
-  ctx: Context
-): Promise<{ blockhash: string; lastValidBlockHeight: bigint }> {
-  if (_bh && Date.now() - _bh.ts < BLOCKHASH_CACHE_TTL_MS) {
-    return { blockhash: _bh.blockhash, lastValidBlockHeight: _bh.lastValidBlockHeight };
-  }
-  const r = (await rpcCall(ctx, 'getLatestBlockhash', [{ commitment: 'confirmed' }], {
-    priority: PRIORITY.HIGH,
-  })) as unknown as { value: { blockhash: string; lastValidBlockHeight: bigint } };
-  return {
-    blockhash: r.value.blockhash,
-    lastValidBlockHeight: BigInt(r.value.lastValidBlockHeight),
-  };
-}
-
-const JITO_TIP_ACCOUNTS = [
-  '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZu5',
-  'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
-  'Cw8CFyMvGrnC7APhSbxu3nm8Dq9H77Y2pEEat9Bshq7m',
-  'DfXygSm4jCyv6LsdiCBsyzpMvMPnPvps9R9fW9GZun9X',
-  'ADa65qRGDTCee3A2Z58A67t3qn6GwoPua676uJ4vcmjX',
-  'AD2vtZ1chzw5LVEHdb4sRkrSdf2A8fTirnCnG54pTeqN',
-  'DttWaMuZQApr4m9pc4sfb5hc51w75F1McB4AES5xK4yH',
-  '3AVa972m1y41zZ1zB1xJw54sCgCg1eRk2e4xLdE8aP7y',
-];
-
-function getRandomJitoTipAccount() {
-  const addrStr = JITO_TIP_ACCOUNTS[Math.floor(Math.random() * JITO_TIP_ACCOUNTS.length)]!;
-  try {
-    return address(addrStr);
-  } catch (err) {
-    throw new Error(
-      `Failed to decode Jito tip address "${addrStr}": ${err instanceof Error ? err.message : String(err)}`,
-      { cause: err }
-    );
-  }
+/**
+ * `/swap/v2/execute` has its own Jupiter bucket (50 RPS on Free) separate from the main one,
+ * so it gets a separate local bucket too.
+ */
+function executeRateLimit(ctx: Context): { key: string; rps: number; priority: PRIORITY } {
+  return { key: `jup-execute:${swapApiKey(ctx)}`, rps: 50, priority: PRIORITY.ULTRA_HIGH };
 }
 
 export async function fetchSdkSwapOrder(
@@ -104,10 +48,10 @@ export async function fetchSdkSwapOrder(
       ? 'https://quote-api.jup.ag/v6'
       : ctx.config.jupiterBaseUrl;
 
-  const jupiterQuoteApi = createJupiterApiClient({
-    basePath,
-    apiKey: ctx.config.jupiterApiKey,
-  });
+  const apiKey = swapApiKey(ctx);
+  const jupiterQuoteApi = createJupiterApiClient({ basePath, apiKey });
+  const { key, rps } = jupiterRateLimit(ctx, apiKey, PRIORITY.ULTRA_HIGH);
+  const acquire = (): Promise<void> => getBucket(key, rps).acquire(PRIORITY.ULTRA_HIGH);
 
   try {
     const dynamicFeeMicroLamports = await fetchDynamicPriorityFee(
@@ -117,6 +61,7 @@ export async function fetchSdkSwapOrder(
     );
     const estimatedLamports = BigInt(Math.round((dynamicFeeMicroLamports * 250_000) / 1_000_000));
 
+    await acquire();
     const quote = await jupiterQuoteApi.quoteGet({
       inputMint,
       outputMint,
@@ -128,6 +73,7 @@ export async function fetchSdkSwapOrder(
 
     if (!quote) throw new Error('No quote found for SDK swap.');
 
+    await acquire();
     const swapResult = await jupiterQuoteApi.swapPost({
       swapRequest: {
         quoteResponse: quote,
@@ -220,7 +166,9 @@ export async function fetchSwapOrder(
   const url = `${ctx.config.jupiterBaseUrl}/swap/v2/order?${params.toString()}`;
   try {
     const order = (await fetchJson(url, {
-      headers: { 'x-api-key': ctx.config.jupiterApiKey },
+      headers: { 'x-api-key': swapApiKey(ctx) },
+      retries: 1,
+      rateLimit: jupiterRateLimit(ctx, swapApiKey(ctx), PRIORITY.ULTRA_HIGH),
     })) as Record<string, unknown>;
 
     if (!order || !order.transaction) {
@@ -279,9 +227,13 @@ async function executeJupiterManagedOrder(ctx: Context, order: SwapOrder): Promi
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      'x-api-key': ctx.config.jupiterApiKey,
+      'x-api-key': swapApiKey(ctx),
     },
     body,
+    // Never auto-retry a signed submission: a timeout may still land, and a resend could
+    // double-execute. Callers own retry decisions with a fresh order.
+    retries: 0,
+    rateLimit: executeRateLimit(ctx),
   })) as Record<string, unknown>;
 
   if (!result || result.status !== 'Success' || !result.signature) {
@@ -311,11 +263,7 @@ async function executeSwapOrderViaRpc(ctx: Context, order: SwapOrder): Promise<s
 
     if (simulation.value.err) {
       const errStr = safeJsonStringify(simulation.value.err);
-      if (
-        errStr.includes('SlippageExceeded') ||
-        errStr.includes('0x1771') ||
-        errStr.includes('6001')
-      ) {
+      if (isSlippageError(simulation.value.err)) {
         throw new Error('SlippageExceeded');
       }
       throw new Error(`Simulation failed: ${errStr}`);
@@ -339,23 +287,42 @@ async function executeSwapOrderViaRpc(ctx: Context, order: SwapOrder): Promise<s
 
   const abortController = new AbortController();
 
+  // Handshake must not hang forever — wrap subscribe in Promise.race like discovery.service.ts
+  const handshakeTimeoutMs = ctx.config.websocketHandshakeTimeoutMs || 15000;
   const subscribePromise = (async () => {
-    const notifications = await ctx.rpcSubscriptions
-      .signatureNotifications(
-        sig as unknown as Parameters<typeof ctx.rpcSubscriptions.signatureNotifications>[0],
-        { commitment: 'confirmed' }
-      )
-      .subscribe({ abortSignal: abortController.signal });
-    for await (const notification of notifications) {
-      abortController.abort();
-      if (notification.value.err) {
-        throw new Error(`Swap failed: ${safeJsonStringify(notification.value.err)}`);
+    let handshakeTimer: NodeJS.Timeout | undefined;
+    const handshakeTimeout = new Promise<never>((_, reject) => {
+      handshakeTimer = setTimeout(
+        () => reject(new Error('signatureNotifications handshake timed out')),
+        handshakeTimeoutMs
+      );
+    });
+    try {
+      const notifications = await Promise.race([
+        ctx.rpcSubscriptions
+          .signatureNotifications(
+            sig as unknown as Parameters<typeof ctx.rpcSubscriptions.signatureNotifications>[0],
+            { commitment: 'confirmed' }
+          )
+          .subscribe({ abortSignal: abortController.signal }),
+        handshakeTimeout,
+      ]);
+      clearTimeout(handshakeTimer);
+      for await (const notification of notifications) {
+        abortController.abort();
+        if (notification.value.err) {
+          throw new Error(`Swap failed: ${safeJsonStringify(notification.value.err)}`);
+        }
+        ctx.logger(`Transaction ${sig} confirmed via WebSocket.`, 'debug');
+        return sig;
       }
-      ctx.logger(`Transaction ${sig} confirmed via WebSocket.`, 'debug');
       return sig;
+    } finally {
+      clearTimeout(handshakeTimer);
     }
-    return sig;
   })();
+  // Prevent UnhandledPromiseRejection if subscribe rejects after timeout wins
+  subscribePromise.catch(() => {});
 
   // Promise.race guarantees timeout resolves even if .subscribe() ignores the AbortSignal
   let timeoutHandle: NodeJS.Timeout;
@@ -377,205 +344,30 @@ async function executeSwapOrderViaRpc(ctx: Context, order: SwapOrder): Promise<s
   }
 }
 
-export async function confirmJitoBundle(
-  ctx: Context,
-  bundleId: string,
-  timeoutMs = 30000
-): Promise<boolean> {
-  // Bundle status must always go to the block engine, not the tip-floor stats URL.
-  const url = `${ctx.config.jitoBlockEngineUrl}/api/v1/bundles`;
-  const startTime = Date.now();
-  const pollInterval = 1500;
-
-  while (Date.now() - startTime < timeoutMs) {
-    try {
-      const response = (await fetchJson(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'getBundleStatuses',
-          params: [[bundleId]],
-        },
-        timeoutMs: 3000,
-        retries: 0,
-      })) as {
-        result?: {
-          value?: Array<{
-            bundle_id: string;
-            confirmationStatus?: string;
-            err?: unknown;
-          }>;
-        };
-      };
-
-      const bundleInfo = response?.result?.value?.[0];
-      if (bundleInfo && bundleInfo.bundle_id === bundleId) {
-        if (bundleInfo.err) {
-          throw new Error(`Jito bundle failed execution: ${safeJsonStringify(bundleInfo.err)}`);
-        }
-        const status = bundleInfo.confirmationStatus;
-        if (status === 'confirmed' || status === 'finalized' || status === 'processed') {
-          ctx.logger(`Jito bundle ${bundleId} confirmed (${status}).`, 'debug');
-          return true;
-        }
-      }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message.includes('Jito bundle failed execution')) {
-        throw err;
-      }
-    }
-    await sleep(pollInterval);
-  }
-  return false;
-}
-
 async function executeSwapOrderViaJito(
   ctx: Context,
   order: SwapOrder,
   isPanic = false,
   tipContext?: TipContext
 ): Promise<string> {
-  const walletAddress = await getWalletAddress(ctx);
+  return executeSwapOrderViaJitoImpl(
+    ctx,
+    order,
+    isPanic,
+    tipContext,
+    signSwapTransaction,
+    isSlippageError
+  );
+}
 
-  const keypairObj = ctx.wallet.keypair;
-  if (!keypairObj) throw new Error('Wallet keypair is missing.');
-  const signer = keypairObj.keyPair as Parameters<typeof signTransaction>[0][number];
-
-  const maxAttempts = ctx.config.jitoBundleRetryAttempts || 3;
-  const timeoutMs = ctx.config.jitoConfirmTimeoutMs || 30000;
-  let attempts = 0;
-
-  while (attempts < maxAttempts) {
-    attempts++;
-
-    const { blockhash, lastValidBlockHeight } = await getBlockhash(ctx);
-
-    const tipAmount = await getDynamicJitoTip(ctx, isPanic, tipContext);
-    const tipAccount = getRandomJitoTipAccount();
-
-    ctx.logger(
-      `[Jito] Preparing bundle attempt ${attempts}/${maxAttempts}. Tip: ${atomicToDecimalString(tipAmount, 9, 6)} SOL to ${tipAccount}`,
-      'debug'
-    );
-
-    const signedJupiterTxBase64 = await signSwapTransaction(ctx, order, false);
-
-    const data = new Uint8Array(12);
-    const view = new DataView(data.buffer);
-    view.setUint32(0, 2, true);
-    view.setBigUint64(4, tipAmount, true);
-
-    const tipInstruction = {
-      programAddress: address('11111111111111111111111111111111'),
-      accounts: [
-        { address: address(walletAddress), role: AccountRole.WRITABLE_SIGNER },
-        { address: tipAccount, role: AccountRole.WRITABLE },
-      ],
-      data,
-    };
-
-    let tipMessage = createTransactionMessage({ version: 0 });
-    tipMessage = setTransactionMessageFeePayer(address(walletAddress), tipMessage);
-    tipMessage = setTransactionMessageLifetimeUsingBlockhash(
-      {
-        blockhash: blockhash as unknown as Parameters<
-          typeof setTransactionMessageLifetimeUsingBlockhash
-        >[0]['blockhash'],
-        lastValidBlockHeight,
-      },
-      tipMessage
-    );
-    tipMessage = appendTransactionMessageInstruction(tipInstruction, tipMessage as any) as any;
-
-    const compiledTipTransaction = compileTransaction(tipMessage as any);
-    const signedTipTransaction = await signTransaction([signer], compiledTipTransaction);
-    const signedTipTxBase64 = getBase64EncodedWireTransaction(signedTipTransaction);
-
-    if (ctx.config.inlineSwapSimulation && attempts === 1) {
-      const simulation = (await rpcCall(
-        ctx,
-        'simulateTransaction',
-        [
-          signedJupiterTxBase64 as any,
-          {
-            encoding: 'base64',
-            commitment: 'confirmed',
-          },
-        ],
-        { priority: PRIORITY.HIGH }
-      )) as unknown as { value: { err: unknown } };
-
-      if (simulation.value.err) {
-        const errStr = safeJsonStringify(simulation.value.err);
-        if (
-          errStr.includes('SlippageExceeded') ||
-          errStr.includes('0x1771') ||
-          errStr.includes('6001')
-        ) {
-          throw new Error('SlippageExceeded');
-        }
-        throw new Error(`Simulation failed: ${errStr}`);
-      }
-    }
-
-    // Bundle submission always targets the block engine endpoint, not the tip-floor stats URL.
-    const jitoUrl = `${ctx.config.jitoBlockEngineUrl}/api/v1/bundles`;
-    let response: Record<string, unknown>;
-    try {
-      response = (await fetchJson(jitoUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: {
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'sendBundle',
-          params: [[signedJupiterTxBase64, signedTipTxBase64]],
-        },
-      })) as Record<string, unknown>;
-    } catch (err: unknown) {
-      ctx.logger(
-        `Jito sendBundle attempt ${attempts} failed to fetch: ${err instanceof Error ? err.message : String(err)}`,
-        'warn'
-      );
-      continue;
-    }
-
-    if (response.error) {
-      ctx.logger(
-        `Jito sendBundle attempt ${attempts} failed: ${safeJsonStringify(response.error)}`,
-        'warn'
-      );
-      continue;
-    }
-
-    const bundleId = response.result as string;
-    ctx.logger(
-      `Jito bundle submitted. Bundle ID: ${bundleId}. Waiting for confirmation...`,
-      'info'
-    );
-
-    try {
-      const confirmed = await confirmJitoBundle(ctx, bundleId, timeoutMs);
-      if (confirmed) {
-        const decodedJupiter = getTransactionDecoder().decode(
-          Buffer.from(signedJupiterTxBase64, 'base64')
-        );
-        const signature = (decodedJupiter as unknown as { signatures: Uint8Array[] }).signatures[0];
-        if (!signature) throw new Error('No signature found in Jupiter transaction.');
-        return bs58.encode(signature);
-      }
-      ctx.logger(`Jito bundle ${bundleId} timed out without landing.`, 'warn');
-    } catch (err: unknown) {
-      ctx.logger(
-        `Jito bundle ${bundleId} execution failed: ${err instanceof Error ? err.message : String(err)}.`,
-        'warn'
-      );
-    }
-  }
-
-  throw new Error(`Jito bundle failed to land after ${maxAttempts} attempts.`);
+export function isSlippageError(errOrMsg: unknown): boolean {
+  const msg =
+    errOrMsg instanceof Error
+      ? errOrMsg.message
+      : typeof errOrMsg === 'string'
+        ? errOrMsg
+        : safeJsonStringify(errOrMsg);
+  return msg.includes('SlippageExceeded') || msg.includes('0x1771') || msg.includes('6001');
 }
 
 export async function executeSwapOrder(
@@ -627,10 +419,7 @@ export async function executeSwapOrderWithSmartRetry(
       const signature = await _swapRetryDispatch.executeSwapOrder(ctx, order, isPanic, tipContext);
       return { signature, order };
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const isSlippageError =
-        msg.includes('SlippageExceeded') || msg.includes('6001') || msg.includes('0x1771');
-      if (isSlippageError && attempts < ctx.config.maxAutoSlippageRetry) {
+      if (isSlippageError(err) && attempts < ctx.config.maxAutoSlippageRetry) {
         attempts++;
         currentSlippage += ctx.config.autoSlippageIncrementBps;
         ctx.logger(

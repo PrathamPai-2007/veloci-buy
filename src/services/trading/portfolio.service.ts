@@ -1,4 +1,4 @@
-﻿import { Context, TokenMetadata } from '#types/index.js';
+import { Context, TokenMetadata } from '#types/index.js';
 import { atomicToDecimalString } from '#core/utils.js';
 import { getSolBalance } from './wallet-manager.js';
 
@@ -145,6 +145,21 @@ export function canBuy(ctx: Context, token: TokenMetadata): { approved: boolean;
 }
 
 /**
+ * Checks if portfolio position capacity exists overall or for a specific launchpad sector.
+ */
+export function hasCapacity(ctx: Context, launchpad?: string): boolean {
+  if (ctx.state.positions.size >= ctx.config.maxOpenPositions) return false;
+  if (launchpad && ctx.config.maxPositionsPerLaunchpad > 0) {
+    const lp = launchpad.toLowerCase();
+    const concurrentInSector = Array.from(ctx.state.positions.values()).filter(
+      (pos) => pos.launchpad?.toLowerCase() === lp
+    ).length;
+    if (concurrentInSector >= ctx.config.maxPositionsPerLaunchpad) return false;
+  }
+  return true;
+}
+
+/**
  * Win/loss stats from last N real (non-ghost) closed trades.
  * Used by kellyMultiplier to estimate the payoff ratio b = avgWin / avgLoss.
  */
@@ -196,7 +211,7 @@ export function kellyMultiplier(
 export function getAdjustedBuySize(ctx: Context, baseSizeLamports: bigint): bigint {
   if (!ctx.config.dynamicSizingEnabled) return baseSizeLamports;
 
-  const recentTrades = ctx.state.closedTrades.slice(-3);
+  const recentTrades = ctx.state.closedTrades.filter((t) => !t.isGhost).slice(-3);
   if (recentTrades.length === 3 && recentTrades.every((t) => t.realizedPnlUsd < 0)) {
     return baseSizeLamports / 2n;
   }
@@ -212,6 +227,7 @@ export const portfolioService = {
   getCurrentBalanceLamports,
   evaluateDrawdownBreaker,
   canBuy,
+  hasCapacity,
   getAdjustedBuySize,
   getWinLossStats,
   kellyMultiplier,

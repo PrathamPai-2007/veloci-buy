@@ -18,6 +18,10 @@ import {
 
 import { getMoodAdjustments as monitorGetMoodAdjustments } from './monitor/monitor.service.js';
 
+/**
+ * Application service container exposing discovery, engine scoring, market data,
+ * paper/live buying, and position monitoring functions.
+ */
 export const evaluateCandidate = engineEvaluateCandidate;
 export const getLaunchpadProfile = engineGetLaunchpadProfile;
 export const looksLikeMemecoin = engineLooksLikeMemecoin;
@@ -35,6 +39,9 @@ export {
   mergeLoopRequest,
 };
 
+/**
+ * Unified application service instance for component injection and testing.
+ */
 export const appService = {
   fetchRecentLaunches,
   fetchTrendingLaunches,

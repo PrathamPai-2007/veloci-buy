@@ -1,0 +1,158 @@
+exports[`snapshot scanForCandidates: all hard-rejected tokens are tracked 1`] = `
+{
+  "metrics": {
+    "boughtPositions": 0,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "consecutiveJupiterFailures": 1,
+    "discoveredCandidates": 0,
+    "exitReasonCounts": {},
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 1,
+    "jupiterDiscoveryTimeouts": 1,
+    "jupiterSuppressedRequests": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 0,
+    "passedCheapAudit": 0,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {},
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "trailingExits": 0
+  },
+  "processedMints": [],
+  "rejectionReasons": {}
+}
+`;
+
+exports[`snapshot scanForCandidates: empty discovery produces zero side effects 1`] = `
+{
+  "marketSnapshots": [],
+  "metrics": {
+    "boughtPositions": 0,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "consecutiveJupiterFailures": 0,
+    "discoveredCandidates": 0,
+    "exitReasonCounts": {},
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 0,
+    "jupiterDiscoveryTimeouts": 0,
+    "jupiterSuppressedRequests": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 0,
+    "passedCheapAudit": 0,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {},
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "trailingExits": 0
+  },
+  "pendingCandidateRechecks": [],
+  "positions": [],
+  "processedMints": []
+}
+`;
+
+exports[`snapshot scanForCandidates: full pipeline with approved + rejected + recheck tokens 1`] = `
+{
+  "evaluatedTokens": [],
+  "marketSnapshots": [
+    [
+      "ApprovedMint1",
+      {
+        "launchpad": "pump.fun",
+        "liquidity": 5000,
+        "observedAt": "MOCKED",
+        "usdPrice": 0.001
+      }
+    ],
+    [
+      "RejectedMint1",
+      {
+        "launchpad": "pump.fun",
+        "liquidity": 100,
+        "observedAt": "MOCKED",
+        "usdPrice": 0.001
+      }
+    ],
+    [
+      "RecheckMint1",
+      {
+        "launchpad": "pump.fun",
+        "liquidity": 300,
+        "observedAt": "MOCKED",
+        "usdPrice": 0.001
+      }
+    ]
+  ],
+  "metrics": {
+    "boughtPositions": 0,
+    "buyAttempts": 0,
+    "buyFailures": 0,
+    "buyRejectedThinLiquidity": 0,
+    "consecutiveJupiterFailures": 0,
+    "discoveredCandidates": 0,
+    "exitReasonCounts": {},
+    "failedMomentum": 0,
+    "finalAuditDeferredIndexing": 0,
+    "finalAuditPassed": 0,
+    "finalAuditQueued": 0,
+    "finalAuditRejected": 0,
+    "jupiterCircuitCloses": 0,
+    "jupiterCircuitOpens": 0,
+    "jupiterCircuitProbes": 0,
+    "jupiterDiscoveryRequests": 0,
+    "jupiterDiscoveryTimeouts": 0,
+    "jupiterSuppressedRequests": 0,
+    "monitorRpcFailures": 0,
+    "monitorTicks": 0,
+    "monitorTicksAborted": 0,
+    "monitorTicksUsingCachedBalance": 0,
+    "passedAudit": 0,
+    "passedCheapAudit": 0,
+    "passedSurvival": 0,
+    "profitableTrades": 0,
+    "rejectionReasons": {},
+    "securityAuditsCompleted": 0,
+    "securityAuditsFailed": 0,
+    "securityAuditsQueued": 0,
+    "securityAuditsSkippedInFlight": 0,
+    "stopLosses": 0,
+    "trailingExits": 0
+  },
+  "pendingCandidateRechecks": [],
+  "positions": [],
+  "processedMints": []
+}
+`;

@@ -1,6 +1,6 @@
-﻿import { address } from '@solana/addresses';
+import { address } from '@solana/addresses';
 import { Context, TipContext } from '#types/index.js';
-import { rpcCall, PRIORITY, fetchJson } from '#core/utils.js';
+import { rpcCall, PRIORITY, fetchJson, coalesce, jitoRateLimit } from '#core/utils.js';
 
 const MIN_TIP_LAMPORTS = 100_000n;
 const MAX_TIP_LAMPORTS = 200_000_000n;
@@ -108,11 +108,13 @@ export async function fetchDynamicPriorityFee(
     }
   }
   if (!isPanic && !ctx.config.priorityFeeAccountLocal) {
-    if (_priorityFeeInFlight) return _priorityFeeInFlight;
-    _priorityFeeInFlight = _fetchPriorityFeeUncached(ctx, accountKeys).finally(() => {
-      _priorityFeeInFlight = null;
-    });
-    return _priorityFeeInFlight;
+    return coalesce(
+      () => _fetchPriorityFeeUncached(ctx, accountKeys),
+      () => _priorityFeeInFlight,
+      (p) => {
+        _priorityFeeInFlight = p;
+      }
+    );
   }
   return _fetchPriorityFeeUncached(ctx, accountKeys, isPanic);
 }
@@ -280,6 +282,7 @@ async function _fetchAndCacheJitoFloor(ctx: Context, url: string): Promise<void>
     },
     timeoutMs: 4000,
     retries: 1,
+    rateLimit: jitoRateLimit(ctx, PRIORITY.LOW),
   })) as {
     result?: Array<{
       landed_tips_25th_percentile?: number;
@@ -294,12 +297,14 @@ async function _fetchAndCacheJitoFloor(ctx: Context, url: string): Promise<void>
   if (!stats) return; // caller handles floorTip === null as a fallback
 
   const percentile = ctx.config.jitoTipPercentile || 75;
-  let solPrice = stats.landed_tips_75th_percentile || 0.001;
-  if (percentile === 25) solPrice = stats.landed_tips_25th_percentile || solPrice;
-  else if (percentile === 50) solPrice = stats.landed_tips_50th_percentile || solPrice;
-  else if (percentile === 75) solPrice = stats.landed_tips_75th_percentile || solPrice;
-  else if (percentile === 95) solPrice = stats.landed_tips_95th_percentile || solPrice;
-  else if (percentile === 99) solPrice = stats.landed_tips_99th_percentile || solPrice;
+  const tipMap: Record<number, number | undefined> = {
+    25: stats.landed_tips_25th_percentile,
+    50: stats.landed_tips_50th_percentile,
+    75: stats.landed_tips_75th_percentile,
+    95: stats.landed_tips_95th_percentile,
+    99: stats.landed_tips_99th_percentile,
+  };
+  const solPrice = tipMap[percentile] ?? stats.landed_tips_75th_percentile ?? 0.001;
 
   _cachedJitoTipFloor = { value: BigInt(Math.round(solPrice * 1e9)), cachedAt: Date.now() };
 }

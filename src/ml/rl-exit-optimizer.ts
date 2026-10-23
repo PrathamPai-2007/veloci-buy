@@ -1,5 +1,5 @@
 import { Config, TrainingSample } from '#types/index.js';
-import { NativeRlPolicy, createRlPolicy } from './native.js';
+import { NativeRlPolicy, createRlPolicy } from './models/factory.js';
 
 /**
  * Regime-conditioned RL optimizer for exit parameters, backed by the native PPO

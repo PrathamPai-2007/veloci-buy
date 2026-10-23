@@ -51,5 +51,7 @@ GEYSER_ENABLED=true GEYSER_SOCKET_PATH=/tmp/veloci-geyser.sock npm start
 ```
 
 If the stream is unavailable the bot logs a warning, reconnects with backoff, and
-continues on RPC polling. Wire a pool decoder in `startGeyserIfEnabled()`
-(`src/index.ts`) to turn the stream into live `marketSnapshots` price updates.
+continues on RPC polling via `src/services/ingestion/geyser-client.ts:1`
+(coordinated by `src/core/bot-internals/geyser-coordinator.ts:1`). The bot-side
+`GeyserClient` + `localMarketState` consume the NDJSON frames as authoritative
+`marketSnapshots` price updates. Ghost exits reuse the same `marketSnapshots` via `marketDataProvider` (`readOnly:true`) — never `upsertPosition`.

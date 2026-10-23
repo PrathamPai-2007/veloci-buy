@@ -1,4 +1,4 @@
-﻿import { journalClosedTrade, bigintRatioToNumber } from '#core/utils.js';
+import { journalClosedTrade, bigintRatioToNumber } from '#core/utils.js';
 import { Context, Position, ClosedTrade } from '#types/index.js';
 import { mlService } from '#ml/ml-service.js';
 
@@ -11,21 +11,77 @@ export function buildExitAccounting(
   sellRaw: bigint,
   balRaw: bigint,
   proceedsUsd: number,
-  proceedsSol: number
+  proceedsSol: number,
+  solPriceHint?: number
 ): {
   realizedPnlUsd: number;
   realizedPnlSol: number;
   remainingCostUsd: number;
   remainingCostSol: number;
 } {
-  const ratio = bigintRatioToNumber(sellRaw, balRaw);
-  const costSoldUsd = Number(pos.remainingCostUsd || 0) * ratio;
-  const costSoldSol = Number(pos.remainingCostSol || 0) * ratio;
+  const isFullExit = balRaw <= 0n || sellRaw >= balRaw;
+  const ratio = isFullExit ? 1.0 : bigintRatioToNumber(sellRaw, balRaw);
+
+  const initialRemainingCostUsd = Math.max(
+    0,
+    Number(pos.remainingCostUsd ?? pos.entryUsdValue ?? 0)
+  );
+  // SOL leg fallback: if remainingCostSol was never set (0) but we have entryPriceSol, derive from USD cost via entry SOL price.
+  let initialRemainingCostSol = Number(pos.remainingCostSol ?? 0);
+  if (
+    !(initialRemainingCostSol > 0) &&
+    pos.entryPriceSol != null &&
+    pos.entryPriceSol > 0 &&
+    pos.entryPriceUsd > 0
+  ) {
+    const solPriceAtEntry = pos.entryPriceUsd / pos.entryPriceSol;
+    if (solPriceAtEntry > 0) initialRemainingCostSol = initialRemainingCostUsd / solPriceAtEntry;
+  }
+  if (!(initialRemainingCostSol > 0) && pos.initialBuyAmountLamports != null) {
+    try {
+      const lamports = BigInt(pos.initialBuyAmountLamports);
+      // atomicToDecimalString equivalent inline to avoid import cycle
+      initialRemainingCostSol = Number(lamports) / 1e9;
+    } catch {}
+  }
+  if (!(initialRemainingCostSol > 0) && pos.initialBuyAmountSol != null) {
+    const solAmt = Number(pos.initialBuyAmountSol);
+    if (solAmt > 0 && Number.isFinite(solAmt)) initialRemainingCostSol = solAmt;
+  }
+  // Last-resort: derive SOL cost from USD cost via live SOL price hint (prevents proceeds-as-PnL absurd).
+  if (
+    !(initialRemainingCostSol > 0) &&
+    initialRemainingCostUsd > 0 &&
+    solPriceHint != null &&
+    solPriceHint > 0
+  ) {
+    initialRemainingCostSol = initialRemainingCostUsd / solPriceHint;
+  }
+  initialRemainingCostSol = Math.max(0, initialRemainingCostSol);
+
+  const costSoldUsd = isFullExit ? initialRemainingCostUsd : initialRemainingCostUsd * ratio;
+  let costSoldSol = isFullExit ? initialRemainingCostSol : initialRemainingCostSol * ratio;
+
+  // Guard: if SOL cost is still zero but we have proceeds, this is a legacy missing-cost position.
+  // Fall back to USD-derived cost so realizedPnlSol is not absurdly equal to proceeds.
+  if (!(costSoldSol > 0) && proceedsSol > 0 && costSoldUsd > 0) {
+    const impliedSolPrice =
+      proceedsUsd > 0 && proceedsSol > 0 ? proceedsUsd / proceedsSol : solPriceHint;
+    if (impliedSolPrice != null && impliedSolPrice > 0) {
+      costSoldSol = costSoldUsd / impliedSolPrice;
+    } else if (solPriceHint != null && solPriceHint > 0) {
+      costSoldSol = costSoldUsd / solPriceHint;
+    }
+  }
+
+  const remainingCostUsd = isFullExit ? 0 : Math.max(0, initialRemainingCostUsd - costSoldUsd);
+  const remainingCostSol = isFullExit ? 0 : Math.max(0, initialRemainingCostSol - costSoldSol);
+
   return {
     realizedPnlUsd: proceedsUsd - costSoldUsd,
     realizedPnlSol: proceedsSol - costSoldSol,
-    remainingCostUsd: Math.max(0, Number(pos.remainingCostUsd || 0) - costSoldUsd),
-    remainingCostSol: Math.max(0, Number(pos.remainingCostSol || 0) - costSoldSol),
+    remainingCostUsd,
+    remainingCostSol,
   };
 }
 
@@ -78,17 +134,59 @@ export function recordTradeResult(ctx: Context, isWin: boolean, realizedPnlUsd?:
 
 export function recordClosedTrade(ctx: Context, pos: Position, reason: string): void {
   const openedAtMs = new Date(pos.openedAt || Date.now()).getTime();
+  // Normalize SOL accounting fallback for legacy positions missing entryPriceSol/initialBuyAmountSol
+  let entryPriceSolNorm = Number(pos.entryPriceSol || 0);
+  if (!(entryPriceSolNorm > 0) && pos.entryPriceUsd > 0 && pos.initialBuyAmountLamports) {
+    try {
+      const solAmt = Number(BigInt(pos.initialBuyAmountLamports)) / 1e9;
+      const usdVal = Number(pos.entryUsdValue || 0);
+      if (solAmt > 0 && usdVal > 0) {
+        const impliedSolPrice = usdVal / solAmt;
+        if (impliedSolPrice > 0) entryPriceSolNorm = pos.entryPriceUsd / impliedSolPrice;
+      }
+    } catch {}
+  }
+  // Fix absurd SOL PnL for legacy positions missing cost basis: derive Sol PnL from USD when needed
+  let realizedPnlSolNorm = Number(pos.realizedPnlSol || 0);
+  const realizedPnlUsdNorm = Number(pos.realizedPnlUsd || 0);
+  if (
+    realizedPnlSolNorm === 0 &&
+    realizedPnlUsdNorm !== 0 &&
+    Number(pos.realizedProceedsSol || 0) > 0
+  ) {
+    // If buildExitAccounting had zero cost, realizedPnlSol would have been == proceedsSol.
+    // Detect that absurd case (proceeds == pnl) even after guard, and correct via USD/solPrice
+    const proceedsSol = Number(pos.realizedProceedsSol || 0);
+    if (
+      Math.abs(realizedPnlSolNorm - proceedsSol) < 1e-9 &&
+      proceedsSol > 0 &&
+      realizedPnlUsdNorm < 0
+    ) {
+      // No valid SOL cost — leave as 0? caller will recompute via USD; prevent proceeds-as-PnL
+      realizedPnlSolNorm = 0;
+    }
+  }
+  // If still zero-cost legacy: try to backfill entryPriceSol from initialBuyAmountLamports / Sol
+  if (!(entryPriceSolNorm > 0) && pos.entryPriceUsd > 0 && pos.initialBuyAmountSol != null) {
+    const solAmt = Number(pos.initialBuyAmountSol);
+    const usdVal = Number(pos.entryUsdValue || 0);
+    if (solAmt > 0 && usdVal > 0) {
+      const impliedSolPrice = usdVal / solAmt;
+      if (impliedSolPrice > 0) entryPriceSolNorm = pos.entryPriceUsd / impliedSolPrice;
+    }
+  }
+
   const trade: ClosedTrade = {
     mint: pos.mint,
     symbol: pos.symbol,
     exitReason: reason,
-    realizedPnlUsd: Number(pos.realizedPnlUsd || 0),
-    realizedPnlSol: Number(pos.realizedPnlSol || 0),
+    realizedPnlUsd: realizedPnlUsdNorm,
+    realizedPnlSol: realizedPnlSolNorm,
     realizedProceedsUsd: Number(pos.realizedProceedsUsd || 0),
     realizedProceedsSol: Number(pos.realizedProceedsSol || 0),
     entryUsdValue: Number(pos.entryUsdValue || 0),
     entryPriceUsd: Number(pos.entryPriceUsd || 0),
-    entryPriceSol: Number(pos.entryPriceSol || 0),
+    entryPriceSol: entryPriceSolNorm,
     highestPriceUsd: Number(pos.highestPriceUsd || pos.entryPriceUsd || 0),
     holdSeconds: Math.max(0, (Date.now() - openedAtMs) / 1000),
     closedAt: new Date().toISOString(),
@@ -102,13 +200,19 @@ export function recordClosedTrade(ctx: Context, pos: Position, reason: string): 
     entryLiquidityUsd: Number(pos.entryLiquidityUsd || 0),
     launchpad: pos.launchpad || null,
     targetsHit: Number(pos.targetsHit || 0),
-    initialBuyAmountSol: pos.initialBuyAmountSol || null,
+    orphan: pos.orphan ? true : undefined,
+    initialBuyAmountSol: pos.initialBuyAmountSol != null ? String(pos.initialBuyAmountSol) : null,
     holdTimeSeriesJson: pos.timeSeries ? JSON.stringify(pos.timeSeries) : undefined,
     entryMarketCapUsd: pos.entryMarketCapUsd,
     exitPriceUsd: pos.exitPriceUsd,
-  };
+    isGhost: false,
+    mode: pos.mode || (ctx.config.paperTrading ? 'paper' : 'live'),
+  } as ClosedTrade & { mode?: string };
   ctx.store.addClosedTrade(trade);
   journalClosedTrade(ctx, trade as unknown as Record<string, unknown>);
+
+  // ponytail: single finalize — add typed orphan metric here, callers no longer suffix reason
+  if ((pos as { orphan?: boolean }).orphan) ctx.store.incrementMetric('orphanExits');
 
   // Symbol-level cooldown: block re-entry into the same name (across copycat mints) for the
   // standard cooldown window. Stops the JAMES-style triple re-entry into instant reversals.
@@ -118,14 +222,26 @@ export function recordClosedTrade(ctx: Context, pos: Position, reason: string): 
   );
 
   if (process.env.ML_ENABLED === 'true' && pos.mlFeaturesJson) {
-    // Mirror ghost-trade label calibration: a win requires a TP-style exit with positive PnL,
-    // not just any profitable close (e.g. a max-hold exit is not a signal worth rewarding).
-    const exitedViaPositiveClose =
-      trade.exitReason.startsWith('take-profit') || trade.exitReason.startsWith('trailing');
+    // Realistic label: any close that is net profitable and either is a TP/trailing win,
+    // or had locked profit (targetsHit>0) — e.g. breakeven-stop or liquidity-exit on runner.
+    // Hard fails (rug/stale/max-hold without profit lock) stay 0.
+    const hardFail =
+      trade.exitReason === 'rug-exit' ||
+      trade.exitReason === 'stale' ||
+      (trade.exitReason === 'max-hold' && (trade.targetsHit ?? 0) === 0);
+    const isProfitableExit =
+      trade.realizedPnlUsd > 0 &&
+      (trade.exitReason.startsWith('take-profit') ||
+        trade.exitReason.startsWith('trailing') ||
+        trade.exitReason === 'breakeven-stop' ||
+        trade.exitReason === 'tp-trailing-max-exit' ||
+        trade.exitReason === 'adaptive-tp-exit' ||
+        trade.exitReason === 'time-exit' ||
+        ((trade.targetsHit ?? 0) > 0 && !hardFail));
     ctx.store.addTrainingSample({
       mint: pos.mint,
       symbol: pos.symbol,
-      label: exitedViaPositiveClose && trade.realizedPnlUsd > 0 ? 1 : 0,
+      label: isProfitableExit && !hardFail ? 1 : 0,
       featuresJson: pos.mlFeaturesJson,
       realizedPnlUsd: trade.realizedPnlUsd,
       entryScore: pos.entryScore,

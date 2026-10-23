@@ -1,57 +1,16 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import yaml from 'js-yaml';
-import { PresetStrategy } from '../types/index.js';
+import { Config, PresetStrategy } from '../types/index.js';
 import { safeConsole } from './utils.js';
+import { TUNING_KEYS, STRATEGY_ML_KEYS } from './tuning-keys.js';
+
+const ALLOWED_KEYS = new Set<string>(['name', 'description', ...TUNING_KEYS, ...STRATEGY_ML_KEYS]);
 
 /**
- * The default trading strategy configuration used if no custom strategy is specified.
- */
-export const DEFAULT_STRATEGY: PresetStrategy = {
-  name: 'Standard Aggressive',
-  description: 'Standard balanced strategy for mid-cap Solana memecoins',
-  minLiquidityUsd: 300,
-  minHolderCount: 5,
-  maxRecheckAttempts: 2,
-  minCandidateScore: 75,
-  minMarketCapUsd: 1000,
-  stopLossPct: 0.15,
-  takeProfitMultiples: [1.3, 2.1],
-  takeProfitMultiplesHigh: [1.24, 2.0],
-  takeProfitFractions: [0.75, 0.6],
-  trailingStopDrawdownPct: 0.15,
-  maxHoldMinutes: 20,
-  holdDurationHighConfidenceMinutes: 30,
-  survivalDelaySeconds: 20,
-  maxOpenPositions: 5,
-  minSurvivalMomentum: 1.05,
-  minBreakoutMultiplier: 1.05,
-  maxPriceDumpPct: 18,
-  maxSurvivalGrowthPct: 450,
-  maxSellPressureIncreasePct: 110,
-  maxAuditTopHoldersPct: 66,
-  minMomentumConsistency: 0.65,
-  minAccelerationFactor: 0.3,
-  maxConcurrentAudits: 20,
-  scanParallelismLight: 8,
-  scanParallelismHeavy: 3,
-  ownerAuditParallelism: 2,
-  priceFallbackParallelism: 6,
-  parallelismMinFactor: 0.55,
-  errorRateWindow: 30,
-  backpressureErrorRateThreshold: 0.22,
-  mintSignalMaxAttempts: 2,
-  mintSignalRetryDelayMs: 500,
-  rpcIndexingRetryDelayMs: 5_000,
-  mlScoreGateThreshold: 0.35,
-  mlScoreWeight: 0.3,
-  breakEvenStopTriggerMultiple: 1.06,
-  breakEvenStopFloorPct: 0.04,
-};
-
-/**
- * Validates a strategy object for correctness and safety.
- * @param strategy - The strategy object to validate.
+ * Validates preset trading strategy properties for numeric constraints and sanity ranges.
+ * @param strategy - Parsed strategy configuration.
+ * @throws Error if strategy contains invalid or out-of-range field values.
  */
 export function validateStrategy(strategy: PresetStrategy): void {
   const errors: string[] = [];
@@ -72,46 +31,11 @@ export function validateStrategy(strategy: PresetStrategy): void {
     errors.push('takeProfitMultiples must contain one or more values greater than 1.');
   }
 
-  const positiveFields: Array<keyof PresetStrategy> = [
-    'minLiquidityUsd',
-    'minHolderCount',
-    'maxRecheckAttempts',
-    'minCandidateScore',
-    'minMarketCapUsd',
-    'survivalDelaySeconds',
-    'maxOpenPositions',
-    'minSurvivalMomentum',
-    'minBreakoutMultiplier',
-    'maxPriceDumpPct',
-    'maxSurvivalGrowthPct',
-    'maxSellPressureIncreasePct',
-    'maxAuditTopHoldersPct',
-    'minMomentumConsistency',
-    'minAccelerationFactor',
-    'maxConcurrentAudits',
-    'scanParallelismLight',
-    'scanParallelismHeavy',
-    'ownerAuditParallelism',
-    'priceFallbackParallelism',
-    'mintSignalMaxAttempts',
-    'mintSignalRetryDelayMs',
-    'rpcIndexingRetryDelayMs',
-    'mlScoreGateThreshold',
-    'mlScoreWeight',
-    'burstSurvivalSeconds',
-    'burstMinMomentum',
-    'burstMaxEntryDrawdownPct',
-    'burstMinBuySellRatio',
-    'burstTrailingDrawdownPct',
-    'burstMaxHoldMinutes',
-    'breakEvenStopTriggerMultiple',
-    'breakEvenStopFloorPct',
-  ];
-
-  for (const field of positiveFields) {
-    const value = strategy[field];
+  // Every numeric tuning knob is a count, threshold, delay or ratio: none may be negative.
+  // (earlyPerformanceDropPct-style "drop" values are expressed as positive magnitudes.)
+  for (const [field, value] of Object.entries(strategy)) {
     if (typeof value === 'number' && (!Number.isFinite(value) || value < 0)) {
-      errors.push(`${String(field)} must be a non-negative number.`);
+      errors.push(`${field} must be a non-negative number.`);
     }
   }
 
@@ -120,50 +44,102 @@ export function validateStrategy(strategy: PresetStrategy): void {
   }
 }
 
+const STRATEGY_DIR = path.resolve(process.cwd(), 'strategies');
+
+function readStrategyFile(name: string): Record<string, unknown> {
+  const strategyPath = path.join(STRATEGY_DIR, `${name}.yaml`);
+  if (!fs.existsSync(strategyPath)) {
+    throw new Error(`Strategy file not found: ${strategyPath}`);
+  }
+  const parsed = yaml.load(fs.readFileSync(strategyPath, 'utf8'));
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Strategy file ${strategyPath} must be a YAML mapping.`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/** Rejects unknown keys (typos, removed knobs) and values whose type differs from the base. */
+function checkShape(
+  name: string,
+  overrides: Record<string, unknown>,
+  base: Record<string, unknown>
+): void {
+  const errors: string[] = [];
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!ALLOWED_KEYS.has(key)) {
+      errors.push(`unknown key "${key}"`);
+      continue;
+    }
+    const expected = base[key];
+    if (expected === undefined || value === null) continue;
+    const kind = (v: unknown): string => (Array.isArray(v) ? 'array' : typeof v);
+    if (kind(value) !== kind(expected)) {
+      errors.push(`"${key}" must be ${kind(expected)}, got ${kind(value)}`);
+    }
+  }
+  if (errors.length > 0) {
+    throw new Error(`Strategy "${name}" is invalid:\n- ${errors.join('\n- ')}`);
+  }
+}
+
+function loadBaseStrategy(): PresetStrategy {
+  const base = readStrategyFile('standard');
+  checkShape('standard', base, base);
+  const missing = TUNING_KEYS.filter((key) => base[key] === undefined);
+  if (missing.length > 0) {
+    throw new Error(`strategies/standard.yaml is missing required keys: ${missing.join(', ')}`);
+  }
+  const strategy = base as unknown as PresetStrategy;
+  validateStrategy(strategy);
+  return strategy;
+}
+
+/** standard.yaml: the complete set of tuning defaults every other strategy is merged over. */
+export const DEFAULT_STRATEGY: PresetStrategy = loadBaseStrategy();
+
 /**
- * Loads a strategy from the strategies/ directory.
- * @param name - The name of the strategy (filename without .yaml).
+ * Loads a strategy by name: strategies/<name>.yaml merged over standard.yaml, then validated.
+ * Falls back to standard if the requested strategy is missing or invalid.
+ * @param name - Strategy name (e.g. 'standard', 'custom-alpha').
  */
 export function loadStrategy(name: string): PresetStrategy {
-  const strategyPath = path.resolve(process.cwd(), 'strategies', `${name}.yaml`);
-  let strategy: PresetStrategy;
-
-  if (!fs.existsSync(strategyPath)) {
-    if (name === 'standard') {
-      strategy = DEFAULT_STRATEGY;
-    } else {
-      safeConsole(
-        'error',
-        `[CONFIG] Strategy file not found: ${strategyPath}. Falling back to standard.`
-      );
-      strategy = loadStrategy('standard');
-    }
-  } else {
-    try {
-      const content = fs.readFileSync(strategyPath, 'utf8');
-      const parsed = yaml.load(content) as Partial<PresetStrategy>;
-      strategy = { ...DEFAULT_STRATEGY, ...parsed };
-    } catch (err: unknown) {
-      safeConsole(
-        'error',
-        `[CONFIG] Failed to parse strategy file ${strategyPath}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      strategy = DEFAULT_STRATEGY;
-    }
-  }
-
+  if (name === 'standard') return { ...DEFAULT_STRATEGY };
   try {
+    const overrides = readStrategyFile(name);
+    checkShape(name, overrides, DEFAULT_STRATEGY as unknown as Record<string, unknown>);
+    const strategy = { ...DEFAULT_STRATEGY, ...overrides } as PresetStrategy;
     validateStrategy(strategy);
+    return strategy;
   } catch (err: unknown) {
-    safeConsole(
-      'error',
-      `[CONFIG] Strategy validation failed for "${name}": ${err instanceof Error ? err.message : String(err)}`
-    );
-    if (name !== 'standard') {
-      return loadStrategy('standard');
-    }
-    throw err; // If standard fails validation, we have a critical error.
+    const message = err instanceof Error ? err.message : String(err);
+    safeConsole('error', `[CONFIG] Failed to load strategy "${name}": ${message}`);
+    safeConsole('error', `[CONFIG] Falling back to standard strategy.`);
+    return { ...DEFAULT_STRATEGY };
   }
+}
 
+/** Copies the tuning (and, by default, optional ML) fields of a resolved strategy. */
+export function pickStrategyFields(
+  strategy: PresetStrategy,
+  keys: readonly string[] = [...TUNING_KEYS, ...STRATEGY_ML_KEYS]
+): Partial<Config> {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = (strategy as Record<string, unknown>)[key];
+    if (value !== undefined) out[key] = Array.isArray(value) ? (value as unknown[]).slice() : value;
+  }
+  return out as Partial<Config>;
+}
+
+/**
+ * Applies a strategy preset directly onto an active Config instance in-memory.
+ * @param config - The application configuration object to mutate.
+ * @param strategyName - The name of the preset strategy to load and apply.
+ * @returns The loaded PresetStrategy.
+ */
+export function applyStrategyToConfig(config: Config, strategyName: string): PresetStrategy {
+  const strategy = loadStrategy(strategyName);
+  config.strategyName = strategyName;
+  Object.assign(config, pickStrategyFields(strategy));
   return strategy;
 }

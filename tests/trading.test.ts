@@ -148,8 +148,8 @@ test('trading estimateSolUsdPrice handles hanging fetch and fallback timeout', a
   const originalSetTimeout = global.setTimeout;
   const originalNow = Date.now;
 
-  // Expire cache by shifting time forward
-  Date.now = () => originalNow() + 500_000;
+  // Expire cache by shifting time forward by 30s (past 15s cache TTL, within 60s max accounting age)
+  Date.now = () => originalNow() + 30_000;
 
   // Speed up the 10-second timeout to 5ms for the test
   (global as any).setTimeout = function (cb: any, ms: number, ...args: any[]) {

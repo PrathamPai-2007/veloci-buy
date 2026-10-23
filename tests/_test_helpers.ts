@@ -2,7 +2,6 @@
 
 (global as any).__TEST__ = true;
 
-import path from 'node:path';
 import {
   Config,
   State,
@@ -10,213 +9,27 @@ import {
   Position,
   MarketSnapshot,
   RecheckItem,
+  TokenMetadata,
 } from '../src/types/index.js';
 import { StateStore } from '../src/core/store.js';
+import { _resetBucketsForTest } from '../src/core/utils/rate-limit.js';
+import {
+  jupiterDiscoveryBreaker,
+  jupiterPositionBreaker,
+} from '../src/services/jupiter-circuit-breaker.js';
 import * as bot from '../src/index.js';
 
-export function createTestConfig(overrides: Partial<Config> = {}): Config {
-  const rpcUrl = 'http://localhost:8899';
-  return {
-    strategyName: 'test',
-    logFile: path.join(process.cwd(), '.test-artifacts', 'bot.log'),
-    stateFile: '',
-    metricsFile: '',
-    mintsFile: '',
-    scannedTokensFile: '',
-    paperTradeJournalFile: '',
-    tradeJournalFile: '',
-    performanceStatsFile: '',
-    sessionDir: '',
-    stateFlushIntervalMs: 250,
-    jupiterBaseUrl: 'http://mock',
-    jupiterApiKey: 'test-key',
-    jupiterPositionApiKey: 'position-key',
-    rugcheckBaseUrl: 'http://mock-rugcheck',
-    rugcheckApiKey: 'test-rugcheck-key',
-    bubbleMapsBaseUrl: 'http://mock-bubblemaps',
-    bubbleMapsApiKey: '',
-    minBubbleMapsScore: 0,
-    maxBubbleMapsLargestClusterShare: 100,
-    minMarketCapUsd: 0,
-    trendingDiscoveryEnabled: true,
-    trendingPollIntervalMs: 20_000,
-    trendingInterval: '5m',
-    trendingMaxSurvivalGrowthPct: 900,
-    trendingMaxBuyTopGrowthPct: 250,
-    trendingMaxPriceDumpPct: 30,
-    trendingMaxTokenAccountTop1Pct: 80,
-    trendingMaxTokenAccountTop5Pct: 80,
-    trendingMinBubbleMapsScore: 40,
-    rpcUrl,
-    rpcUrls: [rpcUrl],
-    wsRpcUrl: 'ws://localhost:8900',
-    wsRpcUrls: ['ws://localhost:8900'],
-    buyAmountLamports: 50_000_000n,
-    buyAmountSolText: '0.05',
-    initialPaperSolText: '0.1',
-    initialPaperSolLamports: 100_000_000n,
-    paperTrading: true,
-    dryRun: false,
-    liveTradingEnabled: false,
-    closePositionsOnShutdown: true,
-    slippageBps: 500,
-    takeProfitMultiples: [1.15, 1.75],
-    takeProfitMultiplesHigh: [1.24, 2.0],
-    takeProfitFractions: [0.75, 0.6],
-    takeProfitFraction: 0.6,
-    highGrowthConfidenceScore: 70,
-    holdDurationHighConfidenceMinutes: 10,
-    holdDurationLowConfidenceMinutes: 5,
-    moodPauseDurationMinutes: 60,
-    coolDownMinutes: 5,
-    minLiquidityUsd: 750,
-    minHolderCount: 4,
-    minBuys5m: 1,
-    minPoolAgeSeconds: 0,
-    maxCandidateAgeMinutes: 30,
-    minOrganicScore: 0,
-    minSocialLinks: 0,
-    allowVerifiedTokens: true,
-    maxAuditTopHoldersPct: 95,
-    maxTokenAccountTop1Pct: 70,
-    maxTokenAccountTop3Pct: 30,
-    maxTokenAccountTop5Pct: 54,
-    maxBuyLiquidityFraction: 0, // off by default in tests (gate would need a mocked SOL price)
-    moonBagFraction: 0, // off by default in tests to keep exit-path tests deterministic
-    moonBagTrailingDrawdownPct: 0.4,
-    insiderDriftConcentrationTop5: 0.6,
-    memeKeywords: ['pepe', 'doge'],
-    maxMemeFdvUsd: 10_000_000,
-    maxFdvToLiquidity: 80,
-    borderlineThresholdBufferRatio: 0.2,
-    borderlineRecheckEnabled: true,
-    borderlineRecheckMinDelayMs: 10_000,
-    borderlineRecheckMaxDelayMs: 20_000,
-    maxLiquidityDrawdownPct: 15,
-    maxSurvivalGrowthPct: 200,
-    minSurvivalMomentum: 1.0,
-    minBreakoutMultiplier: 1.001,
-    earlyPerformanceGuardSeconds: 60,
-    earlyPerformanceDropPct: 10,
-    earlyPerformanceSellPct: 60,
-    minAccelerationFactor: 0.16,
-    maxExhaustionRangePct: 1.6,
-    minMomentumConsistency: 0.45,
-    maxPriceDumpPct: 20,
-    maxSellPressureIncreasePct: 100,
-    minCandidateScore: 60,
-    reentryDipPct: 15,
-    reentryBreakoutPct: 20,
-    liquidityCollapseThresholdUsd: 750,
-    liquidityCollapseThresholdRatio: 0.25,
-    minHoldTimeSeconds: 60,
-    performanceCheckSeconds: 75,
-    performanceMinMomentum: 1.05,
-    stopLossPct: 0.2,
-    trailingStopDrawdownPct: 0.2,
-    maxHoldMinutes: 60,
-    timeExitMinMultiple: 1.25,
-    holderCountWaitlistSeconds: 60,
-    recheckPriceDropPct: 15,
-    maxConcurrentAudits: 10,
-    scanParallelismLight: 10,
-    scanParallelismHeavy: 4,
-    ownerAuditParallelism: 4,
-    priceFallbackParallelism: 6,
-    parallelismMinFactor: 0.5,
-    errorRateWindow: 20,
-    backpressureErrorRateThreshold: 0.3,
-    mintSignalMaxAttempts: 3,
-    mintSignalRetryDelayMs: 750,
-    rpcIndexingRetryDelayMs: 15_000,
-    maxRecheckAttempts: 5,
-    borderlineRecheckMaxAttempts: 3,
-    maxAutoSlippageRetry: 3,
-    autoSlippageIncrementBps: 100,
-    priorityFeeBaseMicroLamports: 25_000,
-    priorityFeeMaxMicroLamports: 5_000_000,
-    priorityFeePanicMultiplier: 2,
-    priorityFeePercentile: 75,
-    useJito: false,
-    jitoTipLamports: 1_000_000n,
-    jitoBlockEngineUrl: 'http://mock-jito',
-    jitoTipPercentile: 75,
-    jitoTipFloorApiUrl: '',
-    jitoConfirmTimeoutMs: 30000,
-    jitoBundleRetryAttempts: 3,
-    priorityFeeAccountLocal: true,
-    priorityFeeVolatilityMultiplier: 1.0,
-    maxOpenPositions: 10,
-    maxBuysPerScan: 2,
-    maxCandidatesPerScan: 15,
-    scanIntervalMs: 5000,
-    discoveryPollIntervalMs: 10_000,
-    discoveryWsDebounceMs: 750,
-    websocketWatchdogIntervalMs: 30_000,
-    websocketStaleThresholdMs: 90_000,
-    websocketHandshakeTimeoutMs: 15_000,
-    survivalDelaySeconds: 20,
-    survivalDelayThresholdHigh: 75,
-    survivalDelayThresholdVeryHigh: 90,
-    finalAuditSeconds: 5,
-    maxBuyTopGrowthPct: 120,
-    buyTopAthBufferPct: 2,
-    buyingTheTopSlPct: 25,
-    discoveryWsEnabled: true,
-    discoveryPumpEnabled: true,
-    discoveryRaydiumEnabled: true,
-    discoveryMeteoraEnabled: true,
-    useJupiterSdk: false,
-    inlineSwapSimulation: true,
-    backgroundAtaClose: true,
-    privateKey: '',
-    privateKeyPath: '',
-    telegramBotToken: '',
-    telegramChatId: '',
-    discordWebhookUrl: '',
-    maxDailyDrawdownPct: 0.15,
-    circuitBreakerEnabled: true,
-    drawdownCooldownMinutes: 30,
-    lossStreakBreakerEnabled: false,
-    lossStreakThreshold: 3,
-    lossStreakCooldownMinutes: 15,
-    expectancyBreakerEnabled: false,
-    lossStreakWindowSize: 4,
-    maxPositionsPerLaunchpad: 3,
-    dynamicSizingEnabled: true,
-    mlGateMinRealTrades: 5,
-    adaptiveFloorEnabled: true,
-    adaptiveFloorLiveEnabled: false,
-    minCandidateScoreFloor: 50,
-    tradeStarvationMinutes: 10,
-    starvationRelaxStep: 3,
-    burstModeEnabled: false,
-    burstSurvivalSeconds: 1.5,
-    burstMinMomentum: 1.02,
-    burstMaxEntryDrawdownPct: 8,
-    burstMinBuySellRatio: 1.5,
-    burstTrailingDrawdownPct: 0.18,
-    burstMaxHoldMinutes: 10,
-    burstTakeProfitMultiples: undefined,
-    burstTakeProfitFractions: undefined,
-    burstMaxSolOutflowPct: 0.05,
-    rugExitGuardEnabled: true,
-    rugExitWindowSec: 15,
-    rugExitDropPct: 0.05,
-    rugExitDynamicScalingEnabled: true,
-    rugExitMicroCapThresholdUsd: 100_000,
-    rugExitMicroCapMultiplier: 1.8,
-    rugExitHighCapThresholdUsd: 500_000,
-    rugExitHighCapMultiplier: 0.7,
-    rugExitVolatilityScalingEnabled: true,
-    rugExitSpreadGuardEnabled: true,
-    rugExitMaxSpreadPct: 0.15,
-    rugExitSpreadExpansionMultiplier: 2.0,
-    rugExitVolumeGuardEnabled: true,
-    rugExitSellDominanceMultiplier: 2.5,
-    ...overrides,
-  } as Config;
-}
+import { TestConfigBuilder, createTestConfig } from './factories/config.js';
+import { createTestToken, createTestMarketSnapshot } from './factories/token.js';
+import { createTestPosition } from './factories/position.js';
+
+export {
+  TestConfigBuilder,
+  createTestConfig,
+  createTestToken,
+  createTestMarketSnapshot,
+  createTestPosition,
+};
 
 export function createState(overrides: Partial<State> = {}): State {
   return {
@@ -241,13 +54,8 @@ export function createState(overrides: Partial<State> = {}): State {
     consecutiveLosses: 0,
     recentPnlWindow: [],
     lossStreakPauseActive: false,
-    jupiterPriceCooldownUntil: null,
-    jupiterPositionPriceCooldownUntil: null,
-    swingWatchlist: new Map(),
-    swingJupiterCooldownUntil: null,
     mintToPool: new Map(),
     prefetchedMintSignals: new Map(),
-    burstPriceSamples: new Map(),
     metrics: {
       discoveredCandidates: 0,
       passedCheapAudit: 0,
@@ -265,6 +73,21 @@ export function createState(overrides: Partial<State> = {}): State {
       finalAuditPassed: 0,
       finalAuditDeferredIndexing: 0,
       finalAuditRejected: 0,
+      jupiterCircuitOpens: 0,
+      jupiterCircuitCloses: 0,
+      jupiterCircuitProbes: 0,
+      jupiterSuppressedRequests: 0,
+      consecutiveJupiterFailures: 0,
+      jupiterDiscoveryRequests: 0,
+      jupiterDiscoveryTimeouts: 0,
+      monitorTicks: 0,
+      monitorTicksAborted: 0,
+      monitorRpcFailures: 0,
+      monitorTicksUsingCachedBalance: 0,
+      securityAuditsQueued: 0,
+      securityAuditsSkippedInFlight: 0,
+      securityAuditsCompleted: 0,
+      securityAuditsFailed: 0,
       exitReasonCounts: {},
       rejectionReasons: {},
     },
@@ -276,6 +99,10 @@ export function createCtx(
   configOverrides: Partial<Config> = {},
   stateOverrides: Partial<State> = {}
 ): Context {
+  // Breakers and rate buckets are process-wide; start every test context from a clean slate.
+  jupiterDiscoveryBreaker.reset();
+  jupiterPositionBreaker.reset();
+  _resetBucketsForTest();
   const config = createTestConfig(configOverrides);
   const store = new StateStore(config);
   Object.assign(store.state, createState(stateOverrides));
@@ -342,6 +169,52 @@ export async function withPatchedMembers<T>(
       target[key] = value;
     }
   }
+}
+
+export function serializeForSnapshot(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value === 'bigint') return { __bigint: value.toString() };
+  if (value instanceof Map) {
+    return {
+      __map: Array.from(value.entries(), ([k, v]) => [
+        serializeForSnapshot(k),
+        serializeForSnapshot(v),
+      ]),
+    };
+  }
+  if (value instanceof Set) {
+    return { __set: Array.from(value, (v) => serializeForSnapshot(v)) };
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => serializeForSnapshot(v));
+  }
+  if (typeof value === 'object' && !(value instanceof Date) && !(value instanceof RegExp)) {
+    const obj: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      obj[key] = serializeForSnapshot((value as Record<string, unknown>)[key]);
+    }
+    return obj;
+  }
+  return value;
+}
+
+export function createCannedToken(overrides: Partial<TokenMetadata> = {}): TokenMetadata {
+  const now = Date.now();
+  return {
+    id: 'CannedMint123',
+    symbol: 'CND',
+    name: 'Canned Token',
+    decimals: 9,
+    usdPrice: 0.001,
+    liquidity: 5_000,
+    holderCount: 200,
+    organicScore: 100,
+    fdv: 1_000_000,
+    firstPool: { createdAt: new Date(now - 60_000).toISOString() },
+    launchpad: 'pump.fun',
+    stats5m: { numBuys: 50, numSells: 10 },
+    ...overrides,
+  };
 }
 
 export function seedBotState(

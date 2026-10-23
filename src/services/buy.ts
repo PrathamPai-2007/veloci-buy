@@ -9,14 +9,14 @@ import {
   journalPaperTrade,
   PRIORITY,
   rpcCall,
-} from '../core/utils.js';
+} from '#core/utils.js';
 import fs from 'node:fs';
 import path from 'node:path';
-import { SOL_MINT } from '../core/config.js';
+import { SOL_MINT } from '#core/config.js';
 import * as trading from './trading/trading.service.js';
 import * as monitor from './monitor/monitor.service.js';
-import { getBurstTakeProfitPlan } from './burst/index.js';
 import { portfolioService } from './trading/portfolio.service.js';
+import { localMarketState } from './market-state/index.js';
 import {
   Context,
   Config,
@@ -24,7 +24,7 @@ import {
   SwapOrder,
   EvaluationResult,
   TransactionData,
-} from '../types/index.js';
+} from '#types/index.js';
 
 /**
  * Resolves the configured buy amount in lamports.
@@ -44,16 +44,9 @@ function resolveBuyAmountLamports(config: Config): string {
 
 /**
  * Computes the reserved moon-bag tranche (raw token units) from the initial token amount.
- * Returns undefined when the moon bag is disabled (fraction <= 0) or for burst entries, so no
- * runner is reserved. Burst scalps exit on their own tight trailing; a wide-trailing runner
- * would conflict with that strategy.
+ * Returns undefined when the moon bag is disabled (fraction <= 0).
  */
-function computeMoonBagRaw(
-  ctx: Context,
-  initialTokenAmountRaw: bigint,
-  entryProfile?: string
-): string | undefined {
-  if (entryProfile === 'burst') return undefined;
+function computeMoonBagRaw(ctx: Context, initialTokenAmountRaw: bigint): string | undefined {
   const fraction = ctx.config.moonBagFraction;
   if (!(fraction > 0)) return undefined;
   return monitor.computeTakeProfitSellAmount(initialTokenAmountRaw, fraction).toString();
@@ -72,14 +65,20 @@ export async function buyCandidate(
 ): Promise<Position | null> {
   ctx.store.incrementMetric('buyAttempts');
   const { token, candidateScore } = evaluation;
+
+  if (!localMarketState.isAuthoritative(token.id)) {
+    ctx.logger(
+      `[POSITION_DATA_BLOCKED] mint=${token.id} status=${localMarketState.getStateStatus(token.id)} reason=authoritative-market-state-unavailable`,
+      'warn',
+      { console: true }
+    );
+    return null;
+  }
   const decimals = Number(token.decimals || 6);
 
-  const tpPlan =
-    evaluation.entryProfile === 'burst'
-      ? getBurstTakeProfitPlan(ctx)
-      : evaluation.tpProfileOverride
-        ? monitor.getTakeProfitPlanByProfile(ctx, evaluation.tpProfileOverride)
-        : monitor.getTakeProfitPlan(ctx, candidateScore);
+  const tpPlan = evaluation.tpProfileOverride
+    ? monitor.getTakeProfitPlanByProfile(ctx, evaluation.tpProfileOverride)
+    : monitor.getTakeProfitPlan(ctx, candidateScore);
   const mood = monitor.getMoodAdjustments(ctx);
 
   if (mood.isPaused) {
@@ -204,6 +203,14 @@ async function executePaperBuy(
   // concurrent callers even if the position write is delayed.
   ctx.store.updatePaperSolBalance(BigInt(ctx.state.paperSolBalanceLamports) - buyLamports);
 
+  const solPriceForAccounting =
+    quote.solPrice > 0
+      ? quote.solPrice
+      : quote.entryPriceUsd > 0
+        ? quote.entryUsdValue / Number(atomicToDecimalString(buyLamports, 9, 9))
+        : 0;
+  const entryPriceSolSafe =
+    solPriceForAccounting > 0 ? quote.entryPriceUsd / solPriceForAccounting : 0;
   const pos: Position = {
     mint: token.id,
     symbol: token.symbol,
@@ -212,12 +219,12 @@ async function executePaperBuy(
     openedAt: new Date().toISOString(),
     mode: 'paper',
     entryPriceUsd: quote.entryPriceUsd,
-    entryPriceSol: quote.entryPriceUsd / quote.solPrice,
+    entryPriceSol: entryPriceSolSafe,
     entryUsdValue: quote.entryUsdValue,
-    initialBuyAmountSol: buySolText,
+    initialBuyAmountSol: String(buySolText),
     initialBuyAmountLamports: buyLamports.toString(),
     initialTokenAmountRaw: quote.outAmount.toString(),
-    moonBagRaw: computeMoonBagRaw(ctx, quote.outAmount, evaluation.entryProfile),
+    moonBagRaw: computeMoonBagRaw(ctx, quote.outAmount),
     targetsHit: 0,
     tpProfile: tpPlan.profileId,
     takeProfitMultiples: tpPlan.takeProfitMultiples,
@@ -258,13 +265,12 @@ async function executePaperBuy(
     },
     mlFeaturesJson: evaluation.mlFeaturesJson,
     entryProfile: evaluation.entryProfile || 'standard',
-    burstEntryMomentum: evaluation.burstEntryMomentum,
-    burstBuySellRatio: evaluation.burstBuySellRatio,
-    burstTrailingDrawdownPct: evaluation.burstTrailingDrawdownPct,
     entryConfidence: evaluation.mlScore?.confidence ?? 0.5,
   };
 
   ctx.store.upsertPosition(pos);
+  // Standalone ATA subscription for all launchpads (pump.fun has no vaults but still needs push)
+  if (ctx.subscribeToAtaBalance) ctx.subscribeToAtaBalance(token.id).catch(() => {});
   if (
     ctx.subscribeToVaultBalances &&
     (token.launchpad === 'raydium' || token.launchpad === 'meteora')
@@ -454,7 +460,7 @@ async function executeLiveBuy(
     initialBuyAmountSol: buySolText,
     initialBuyAmountLamports: buyLamports.toString(),
     initialTokenAmountRaw: received.toString(),
-    moonBagRaw: computeMoonBagRaw(ctx, received, evaluation.entryProfile),
+    moonBagRaw: computeMoonBagRaw(ctx, received),
     targetsHit: 0,
     tpProfile: tpPlan.profileId,
     takeProfitMultiples: tpPlan.takeProfitMultiples,
@@ -495,13 +501,11 @@ async function executeLiveBuy(
     },
     mlFeaturesJson: evaluation.mlFeaturesJson,
     entryProfile: evaluation.entryProfile || 'standard',
-    burstEntryMomentum: evaluation.burstEntryMomentum,
-    burstBuySellRatio: evaluation.burstBuySellRatio,
-    burstTrailingDrawdownPct: evaluation.burstTrailingDrawdownPct,
     entryConfidence: evaluation.mlScore?.confidence ?? 0.5,
   };
 
   ctx.store.upsertPosition(pos);
+  if (ctx.subscribeToAtaBalance) ctx.subscribeToAtaBalance(token.id).catch(() => {});
   if (
     ctx.subscribeToVaultBalances &&
     (token.launchpad === 'raydium' || token.launchpad === 'meteora')

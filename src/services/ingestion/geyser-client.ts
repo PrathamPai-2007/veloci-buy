@@ -14,6 +14,7 @@
  */
 import net from 'node:net';
 import bs58 from 'bs58';
+import type { Config } from '#types/index.js';
 
 /** One account update line emitted by the plugin. */
 export interface GeyserAccountUpdate {
@@ -184,11 +185,13 @@ export class GeyserClient {
   }
 }
 
-/** Reads Geyser client options from the environment, or null if disabled. */
-export function geyserOptionsFromEnv(): { tcpAddr?: string; socketPath?: string } | null {
-  if (process.env.GEYSER_ENABLED === 'false') return null;
-  const tcpAddr = process.env.GEYSER_TCP_ADDR;
-  const socketPath = process.env.GEYSER_SOCKET_PATH;
+/** Geyser client options from config, or null if disabled or no endpoint is configured. */
+export function geyserOptionsFromConfig(
+  config: Pick<Config, 'geyserEnabled' | 'geyserTcpAddr' | 'geyserSocketPath'>
+): { tcpAddr?: string; socketPath?: string } | null {
+  if (!config.geyserEnabled) return null;
+  const tcpAddr = config.geyserTcpAddr || undefined;
+  const socketPath = config.geyserSocketPath || undefined;
   if (!tcpAddr && !socketPath) return null;
   return { tcpAddr, socketPath };
 }

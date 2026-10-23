@@ -67,18 +67,9 @@ export function decodePrivateKeyBytes(privateKeyText: string): Uint8Array {
     return validateDecodedKey(Uint8Array.from(parsed), 'Private key JSON array');
   }
 
-  // Handle various bs58 import styles
-  const decoder =
-    bs58.decode ||
-    (bs58 as unknown as { default?: { decode: (s: string) => Uint8Array } }).default?.decode;
-
-  if (typeof decoder !== 'function') {
-    throw new Error('bs58 decode function not found.');
-  }
-
   let decoded: Uint8Array;
   try {
-    decoded = decoder(trimmed);
+    decoded = bs58.decode(trimmed);
   } catch (e) {
     throw new Error('Failed to decode private key from Base58.', { cause: e });
   }

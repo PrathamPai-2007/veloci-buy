@@ -151,9 +151,20 @@ export class SQLiteDb implements DbProvider {
 
       CREATE INDEX IF NOT EXISTS idx_ml_samples_closed_at
         ON ml_training_samples (closed_at DESC);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_ml_samples_unique
+        ON ml_training_samples (mint, closed_at);
     `;
 
     this.db.exec(schema);
+
+    try {
+      this.db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_ml_samples_unique ON ml_training_samples (mint, closed_at)`
+      );
+    } catch {
+      // Ignore if dupes prevent unique index
+    }
 
     // Add enrichment columns to ml_training_samples for existing databases.
     // SQLite does not support IF NOT EXISTS for ALTER TABLE, so we try/catch each.

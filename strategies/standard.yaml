@@ -1,28 +1,28 @@
+# Standard sniper strategy — the complete set of tuning defaults.
+# Every other strategy file is merged over this one, so it only needs the keys it changes.
+# Secrets, endpoints and trading mode live in .env (see .env.example), never here.
+
 name: 'Standard Aggressive'
-description: 'Standard balanced strategy'
-minLiquidityUsd: 950
-minHolderCount: 5
-maxRecheckAttempts: 2
-minCandidateScore: 65
-stopLossPct: 0.1
-slippageBps: 300
-takeProfitMultiples: [1.18, 1.6]
-takeProfitMultiplesHigh: [1.26, 1.8]
-takeProfitFractions: [0.75, 0.6]
-trailingStopDrawdownPct: 0.14
-maxHoldMinutes: 20
-holdDurationHighConfidenceMinutes: 30
-survivalDelaySeconds: 20
-maxOpenPositions: 5
-minSurvivalMomentum: 1.01
-minBreakoutMultiplier: 1.00
-maxPriceDumpPct: 18
-maxSurvivalGrowthPct: 450
-maxSellPressureIncreasePct: 110
-maxAuditTopHoldersPct: 66
-minMomentumConsistency: 0.65
-minAccelerationFactor: 0.3
-maxConcurrentAudits: 12
+description: 'Standard balanced strategy for mid-cap Solana memecoins'
+
+# --- Loop cadence & discovery ---
+scanIntervalMs: 4000
+discoveryPollIntervalMs: 20000
+discoveryWsEnabled: true
+discoveryPumpEnabled: true
+discoveryRaydiumEnabled: true
+discoveryMeteoraEnabled: true
+discoveryWsDebounceMs: 500
+trendingDiscoveryEnabled: true
+trendingPollIntervalMs: 20000
+trendingInterval: '5m'
+websocketWatchdogIntervalMs: 10000
+websocketStaleThresholdMs: 90000
+websocketHandshakeTimeoutMs: 15000
+stateFlushIntervalMs: 250
+
+# --- Throughput & RPC backpressure (capped automatically on free-tier RPC) ---
+maxConcurrentAudits: 20
 scanParallelismLight: 8
 scanParallelismHeavy: 3
 ownerAuditParallelism: 2
@@ -33,7 +33,185 @@ backpressureErrorRateThreshold: 0.22
 mintSignalMaxAttempts: 2
 mintSignalRetryDelayMs: 500
 rpcIndexingRetryDelayMs: 5000
+
+# --- Entry gates ---
+minLiquidityUsd: 300
+minOrganicScore: 0
+minHolderCount: 5
+minBuys5m: 1
+minPoolAgeSeconds: 0
+maxCandidateAgeMinutes: 30
+minSocialLinks: 0
+maxAuditTopHoldersPct: 66
+maxTokenAccountTop1Pct: 40
+maxTokenAccountTop3Pct: 30
+maxTokenAccountTop5Pct: 48
+maxFdvToLiquidity: 80
+maxMemeFdvUsd: 10000000
+minMarketCapUsd: 1000
+allowVerifiedTokens: true
+memeKeywords:
+  [
+    'ai',
+    'ape',
+    'bonk',
+    'cat',
+    'chad',
+    'coin',
+    'dog',
+    'elon',
+    'frog',
+    'inu',
+    'kitty',
+    'meme',
+    'moon',
+    'pepe',
+    'pump',
+    'sol',
+    'wojak',
+  ]
+minBubbleMapsScore: 60
+maxBubbleMapsLargestClusterShare: 0.2
+minCandidateScore: 75
+momentumScoringEnabled: true
+minMomentumConsistency: 0.65
+maxExhaustionRangePct: 1.6
+
+# --- Survival window & rechecks ---
+survivalDelaySeconds: 20
+survivalDelayThresholdHigh: 75
+survivalDelayThresholdVeryHigh: 90
+finalAuditSeconds: 5
+minSurvivalMomentum: 1.05
+minBreakoutMultiplier: 1.05
+maxPriceDumpPct: 18
+maxLiquidityDrawdownPct: 15
+maxSurvivalGrowthPct: 450
+minAccelerationFactor: 0.3
+maxSellPressureIncreasePct: 110
+maxRecheckAttempts: 2
+recheckPriceDropPct: 15
+borderlineRecheckEnabled: true
+borderlineRecheckMinDelayMs: 2
+borderlineRecheckMaxDelayMs: 20000
+borderlineRecheckMaxAttempts: 6
+borderlineThresholdBufferRatio: 0.2
+holderCountWaitlistSeconds: 33
+reentryDipPct: 15
+reentryBreakoutPct: 20
+coolDownMinutes: 5
+
+# --- Trending-token overrides ---
+trendingMaxSurvivalGrowthPct: 900
+trendingMaxBuyTopGrowthPct: 250
+trendingMaxPriceDumpPct: 30
+trendingMaxTokenAccountTop1Pct: 80
+trendingMaxTokenAccountTop5Pct: 80
+trendingMinBubbleMapsScore: 40
+
+# --- Sizing & execution ---
+maxOpenPositions: 5
+maxBuysPerScan: 2
+maxCandidatesPerScan: 9
+maxPositionsPerLaunchpad: 3
+maxBuyLiquidityFraction: 0.15
+slippageBps: 500
+maxAutoSlippageRetry: 3
+autoSlippageIncrementBps: 100
+inlineSwapSimulation: true
+backgroundAtaClose: true
+enableLocalRouting: true
+localRoutingComputeUnitLimit: 100000
+dynamicSizingEnabled: false
+kellyEnabled: false
+maxKellyFraction: 0.25
+kellyMinTrades: 10
+
+# --- Priority fees & Jito tips ---
+priorityFeeBaseMicroLamports: 25000
+priorityFeeMaxMicroLamports: 5000000
+priorityFeePanicMultiplier: 2
+priorityFeePercentile: 75
+priorityFeeAccountLocal: true
+priorityFeeVolatilityMultiplier: 1
+dynamicJitoTipEnabled: false
+jitoTipPercentile: 75
+jitoTipMaxFractionOfEv: 0.25
+jitoConfirmTimeoutMs: 30000
+jitoBundleRetryAttempts: 3
+
+# --- Take profit & holding ---
+takeProfitMultiples: [1.3, 2.1]
+takeProfitMultiplesHigh: [1.24, 2]
+takeProfitFractions: [0.75, 0.6]
+takeProfitFraction: 0.6
+highGrowthConfidenceScore: 80
+standardGrowthConfidenceScore: 70
+maxHoldMinutes: 20
+timeExitMinMultiple: 1.25
+holdDurationHighConfidenceMinutes: 30
+holdDurationLowConfidenceMinutes: 5
+minHoldTimeSeconds: 1
+moonBagFraction: 0.1
+moonBagTrailingDrawdownPct: 0.3
+performanceCheckSeconds: 240
+performanceMinMomentum: 1.05
+
+# --- Stops ---
+stopLossPct: 0.15
+trailingStopDrawdownPct: 0.15
+breakevenRatchetEnabled: true
+breakevenRatchetBufferPct: 0.01
+slBreakevenEnabled: true
+slBreakevenThresholdPct: 0.07
+slBreakevenBufferPct: 0.005
+breakEvenStopEnabled: true
+breakEvenStopTriggerMultiple: 1.06
+breakEvenStopFloorPct: 0.04
+earlyStopLossPct: 0.1
+earlyStopLossWindowSec: 30
+midStopLossPct: 0.15
+midStopLossWindowSec: 120
+earlyPerformanceGuardSeconds: 60
+earlyPerformanceDropPct: 10
+earlyPerformanceSellPct: 50
+buyingTheTopSlPct: 25
+buyTopAthBufferPct: 2
+maxBuyTopGrowthPct: 70
+
+# --- Rug & liquidity exits ---
+rugExitGuardEnabled: true
+rugExitWindowSec: 10
+rugExitDropPct: 0.05
+rugExitDynamicScalingEnabled: true
+rugExitMicroCapThresholdUsd: 100000
+rugExitMicroCapMultiplier: 1.8
+rugExitHighCapThresholdUsd: 500000
+rugExitHighCapMultiplier: 0.7
+rugExitVolatilityScalingEnabled: true
+rugExitSpreadGuardEnabled: true
+rugExitMaxSpreadPct: 0.15
+rugExitSpreadExpansionMultiplier: 2
+rugExitVolumeGuardEnabled: true
+rugExitSellDominanceMultiplier: 2.5
+liquidityCollapseThresholdUsd: 750
+liquidityCollapseThresholdRatio: 0.25
+insiderDriftConcentrationTop5: 0.6
+
+# --- Risk breakers & adaptivity ---
+maxDailyDrawdownPct: 0.3
+circuitBreakerEnabled: true
+drawdownCooldownMinutes: 30
+lossStreakBreakerEnabled: true
+lossStreakThreshold: 3
+lossStreakCooldownMinutes: 20
+lossStreakWindowSize: 4
+expectancyBreakerEnabled: true
+moodPauseDurationMinutes: 60
+minCandidateScoreFloor: 50
+tradeStarvationMinutes: 45
+starvationRelaxStep: 4
+
+# --- ML gate (read by src/ml; env ML_SCORE_* still overrides) ---
 mlScoreGateThreshold: 0.35
 mlScoreWeight: 0.3
-breakEvenStopTriggerMultiple: 1.09
-breakEvenStopFloorPct: 0.07

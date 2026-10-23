@@ -1,6 +1,7 @@
+import type Database from 'better-sqlite3';
 import { SQLiteDb } from '../db.js';
 import { migrateJsonToSqlite } from '../migrate.js';
-import { log } from '../utils.js';
+import { log, safeJsonStringify } from '../utils.js';
 import {
   Config,
   State,
@@ -15,90 +16,157 @@ import {
   TrainingSample,
 } from '#types/index.js';
 
-/** A value safe to bind to a SQLite statement, or an object the worker serializes to JSON. */
-export type WorkerRunParam = string | number | bigint | null | object;
+/** A value safe to bind to a SQLite statement, or an object serialized to JSON on enqueue. */
+export type WriteParam = string | number | bigint | null | object;
+type BoundParam = string | number | bigint | null;
 
-/** Messages sent from the main thread to the persistence worker. */
-export type WorkerRequest =
-  | { type: 'run'; stmt: string; params: WorkerRunParam[] }
-  | { type: 'flush'; id: number }
-  | { type: 'shutdown'; id: number };
+/** Retry budget for SQLITE_BUSY/LOCKED before a batch is replayed write-by-write. */
+const MAX_TRANSIENT_RETRIES = 5;
 
-/** Acknowledgements sent from the worker back to the main thread. */
-export interface WorkerResponse {
-  type: 'flush_complete' | 'shutdown_complete';
-  id: number;
+function isTransientSqliteError(err: unknown): boolean {
+  const code = (err as { code?: string })?.code ?? '';
+  if (code === 'SQLITE_BUSY' || code === 'SQLITE_LOCKED') return true;
+  return /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i.test(
+    err instanceof Error ? err.message : String(err)
+  );
+}
+
+function prepareWriteStatements(db: Database.Database): Record<string, Database.Statement> {
+  return {
+    upsertPosition: db.prepare(`
+      INSERT OR REPLACE INTO positions (mint, symbol, name, opened_at, entry_price_usd, data)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `),
+    removePosition: db.prepare('DELETE FROM positions WHERE mint = ?'),
+    addClosedTrade: db.prepare(`
+      INSERT INTO closed_trades (mint, symbol, exit_reason, realized_pnl_usd, realized_pnl_sol, closed_at, data, is_ghost)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    upsertRecheck: db.prepare('INSERT OR REPLACE INTO rechecks (mint, data) VALUES (?, ?)'),
+    removeRecheck: db.prepare('DELETE FROM rechecks WHERE mint = ?'),
+    upsertMetric: db.prepare('INSERT OR REPLACE INTO metrics (key, value) VALUES (?, ?)'),
+    trackMint: db.prepare('INSERT OR REPLACE INTO processed_mints (mint, timestamp) VALUES (?, ?)'),
+    untrackMint: db.prepare('DELETE FROM processed_mints WHERE mint = ?'),
+    upsertKV: db.prepare('INSERT OR REPLACE INTO kv_store (key, value) VALUES (?, ?)'),
+    upsertCooldown: db.prepare('INSERT OR REPLACE INTO cooldowns (mint, data) VALUES (?, ?)'),
+    removeCooldown: db.prepare('DELETE FROM cooldowns WHERE mint = ?'),
+    upsertRetired: db.prepare('INSERT OR REPLACE INTO retired_mints (mint, data) VALUES (?, ?)'),
+    removeRetired: db.prepare('DELETE FROM retired_mints WHERE mint = ?'),
+    upsertLaunch: db.prepare(
+      'INSERT OR REPLACE INTO launch_history (mint, timestamp, data) VALUES (?, ?, ?)'
+    ),
+    upsertSnapshot: db.prepare('INSERT OR REPLACE INTO snapshots (mint, data) VALUES (?, ?)'),
+    removeSnapshot: db.prepare('DELETE FROM snapshots WHERE mint = ?'),
+    addTrainingSample: db.prepare(`
+      INSERT INTO ml_training_samples
+        (mint, symbol, label, features_json, realized_pnl_usd, entry_score, tp_profile, launchpad, closed_at,
+         exit_reason, hold_seconds, highest_price_usd, targets_hit, entry_price_usd, sequence_json, hold_time_series_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+  };
 }
 
 export class StatePersistence {
   private _sqlite: SQLiteDb | null = null;
   private _shutdownRequested = false;
-  private _worker: import('node:worker_threads').Worker | null = null;
-  private _msgSeq = 0;
-  private _pendingFlushes = new Map<number, () => void>();
-  private _pendingShutdown: (() => void) | null = null;
+  /**
+   * Writes are queued and committed in one transaction every stateFlushIntervalMs on the main
+   * thread (better-sqlite3 + WAL handles this volume without a worker).
+   */
+  private _stmts: Record<string, Database.Statement> | null = null;
+  private _writeQueue: Array<{ stmt: string; params: BoundParam[] }> = [];
+  private _flushTimer: NodeJS.Timeout | null = null;
+  private _transientRetries = 0;
 
   constructor(private config: Config) {}
 
   public async init(stateFile: string): Promise<void> {
     if (!stateFile) return;
-    const dbPath = stateFile.replace(/\.json$/, '.db');
+    const configuredDb = (this.config as { dbFile?: string }).dbFile;
+    const dbPath = configuredDb || stateFile.replace(/\.json$/, '.db');
     this._sqlite = new SQLiteDb(dbPath, this.config.logFile);
     this._sqlite.init();
+
+    log(this.config.logFile, `SQLite per-session at ${dbPath} (stateFile: ${stateFile})`, 'info');
+
+    // ML reservoir carryover: import prior samples from shared reservoir into fresh session DB
+    const reservoirPath = (this.config as { mlReservoirFile?: string }).mlReservoirFile;
+    if (reservoirPath && dbPath !== reservoirPath) {
+      await this._importMlReservoir(reservoirPath, dbPath);
+    }
 
     const mintsFile = stateFile.replace(/\.json$/, '_mints.json');
     await migrateJsonToSqlite(stateFile, mintsFile, this._sqlite, this.config.logFile);
 
-    const { Worker } = await import('node:worker_threads');
-    const { fileURLToPath } = await import('node:url');
-    const ext = import.meta.url.endsWith('.ts') ? '.ts' : '.js';
-    const workerPath = fileURLToPath(new URL(`./state.worker${ext}`, import.meta.url));
+    this._stmts = prepareWriteStatements(this._sqlite.db);
     const delayMs = Math.max(1, Number(this.config.stateFlushIntervalMs || 250));
+    this._flushTimer = setInterval(() => this._flushQueue(), delayMs);
+    this._flushTimer.unref();
+  }
 
-    const workerOptions: import('node:worker_threads').WorkerOptions = {
-      workerData: { dbPath, logFile: this.config.logFile, flushIntervalMs: delayMs },
-    };
-
-    if (ext === '.ts') {
-      let tsxApiUrl: string;
-      try {
-        tsxApiUrl = import.meta.resolve('tsx/esm/api');
-      } catch {
-        tsxApiUrl = 'tsx/esm/api';
-      }
-      const loaderCode = `import { register } from ${JSON.stringify(tsxApiUrl)}; register();`;
-      workerOptions.execArgv = ['--import', `data:text/javascript,${loaderCode}`];
-    }
-
-    this._worker = new Worker(workerPath, workerOptions);
-
-    this._worker.on('message', (msg: WorkerResponse) => {
-      if (msg.type === 'flush_complete') {
-        const resolve = this._pendingFlushes.get(msg.id);
-        if (resolve) {
-          this._pendingFlushes.delete(msg.id);
-          resolve();
-        }
-      } else if (msg.type === 'shutdown_complete') {
-        this._sqlite?.close();
-        this._sqlite = null;
-        this._pendingShutdown?.();
-        this._pendingShutdown = null;
-      }
-    });
-
-    this._worker.on('error', (err) => {
-      log(this.config.logFile, `State worker error: ${err}`, 'error');
-      for (const resolve of this._pendingFlushes.values()) resolve();
-      this._pendingFlushes.clear();
-      this._pendingShutdown?.();
-      this._pendingShutdown = null;
+  private _enqueueWrite(stmt: string, params: WriteParam[]): void {
+    if (this._shutdownRequested || !this._stmts) return;
+    // Serialize now: callers keep mutating the objects they pass (positions, snapshots).
+    this._writeQueue.push({
+      stmt,
+      params: params.map((p) =>
+        typeof p === 'object' && p !== null ? safeJsonStringify(p) : (p as BoundParam)
+      ),
     });
   }
 
-  private _enqueueWorkerWrite(stmt: string, params: WorkerRunParam[]): void {
-    if (this._shutdownRequested || !this._worker) return;
-    this._worker.postMessage({ type: 'run', stmt, params });
+  private _runWrite(write: { stmt: string; params: BoundParam[] }): void {
+    const statement = this._stmts?.[write.stmt];
+    if (statement) {
+      statement.run(...write.params);
+    } else {
+      log(
+        this.config.logFile,
+        `SQLite: unknown statement '${write.stmt}' — write dropped`,
+        'error'
+      );
+    }
+  }
+
+  /** Commits the queue in one transaction; isolates poisoned writes instead of wedging. */
+  private _flushQueue(): void {
+    if (!this._sqlite || this._writeQueue.length === 0) return;
+    const batch = this._writeQueue.splice(0);
+    try {
+      this._sqlite.db.transaction(() => {
+        for (const write of batch) this._runWrite(write);
+      })();
+      this._transientRetries = 0;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (isTransientSqliteError(err) && this._transientRetries < MAX_TRANSIENT_RETRIES) {
+        this._transientRetries += 1;
+        this._writeQueue.unshift(...batch);
+        log(
+          this.config.logFile,
+          `SQLite persistence retry ${this._transientRetries}/${MAX_TRANSIENT_RETRIES} (transient): ${message}`,
+          'warn'
+        );
+        return;
+      }
+      this._transientRetries = 0;
+      log(
+        this.config.logFile,
+        `SQLite persistence failed (${message}); replaying ${batch.length} writes individually`,
+        'error'
+      );
+      batch.forEach((write, i) => {
+        try {
+          this._runWrite(write);
+        } catch (writeErr) {
+          log(
+            this.config.logFile,
+            `SQLite dropping poisoned write [${i}/${batch.length}]: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`,
+            'error'
+          );
+        }
+      });
+    }
   }
 
   public loadFromDb(state: State): void {
@@ -110,6 +178,16 @@ export class StatePersistence {
     state.positions = new Map(
       positions.map((p) => {
         const parsed = JSON.parse(p.data) as Position;
+        // Positions from the removed burst/swing modes are managed by the standard sniper monitor.
+        const legacyProfile = (parsed as { entryProfile?: string }).entryProfile;
+        if (legacyProfile && legacyProfile !== 'standard') {
+          log(
+            this.config.logFile,
+            `Position ${parsed.mint} had removed entry profile "${legacyProfile}"; treating as standard.`,
+            'warn'
+          );
+          parsed.entryProfile = 'standard';
+        }
         return [parsed.mint, parsed];
       })
     );
@@ -209,8 +287,8 @@ export class StatePersistence {
       state.peakSessionSolBalanceLamports = state.paperSolBalanceLamports;
       const startVal = state.sessionStartingSolBalanceLamports;
       const peakVal = state.peakSessionSolBalanceLamports;
-      this._enqueueWorkerWrite('upsertKV', ['sessionStartingSolBalanceLamports', startVal]);
-      this._enqueueWorkerWrite('upsertKV', ['peakSessionSolBalanceLamports', peakVal]);
+      this._enqueueWrite('upsertKV', ['sessionStartingSolBalanceLamports', startVal]);
+      this._enqueueWrite('upsertKV', ['peakSessionSolBalanceLamports', peakVal]);
     }
 
     log(
@@ -221,12 +299,8 @@ export class StatePersistence {
   }
 
   public async flush(_options?: { sync?: boolean; force?: boolean }): Promise<void> {
-    if (!this._worker || this._shutdownRequested) return;
-    return new Promise((resolve) => {
-      const id = ++this._msgSeq;
-      this._pendingFlushes.set(id, resolve);
-      this._worker?.postMessage({ type: 'flush', id });
-    });
+    if (!this._sqlite || this._shutdownRequested) return;
+    this._flushQueue();
   }
 
   public async persist(options?: { sync?: boolean; force?: boolean }): Promise<void> {
@@ -302,23 +376,26 @@ export class StatePersistence {
   }
 
   public async requestShutdown(): Promise<void> {
-    if (!this._worker || this._shutdownRequested) return;
+    if (!this._sqlite || this._shutdownRequested) return;
+    if (this._flushTimer) clearInterval(this._flushTimer);
+    this._flushTimer = null;
+    this._flushQueue();
+    // A transient lock may have re-queued the batch; make one final attempt before closing.
+    if (this._writeQueue.length > 0) this._flushQueue();
     this._shutdownRequested = true;
-    return new Promise((resolve) => {
-      const id = ++this._msgSeq;
-      this._pendingShutdown = resolve;
-      this._worker?.postMessage({ type: 'shutdown', id });
-    });
+    this._sqlite.close();
+    this._sqlite = null;
+    this._stmts = null;
   }
 
   public runTrackMint(mint: string, now: number): void {
-    this._enqueueWorkerWrite('trackMint', [mint, now]);
+    this._enqueueWrite('trackMint', [mint, now]);
   }
   public runUntrackMint(mint: string): void {
-    this._enqueueWorkerWrite('untrackMint', [mint]);
+    this._enqueueWrite('untrackMint', [mint]);
   }
   public runRemoveRecheck(mint: string): void {
-    this._enqueueWorkerWrite('removeRecheck', [mint]);
+    this._enqueueWrite('removeRecheck', [mint]);
   }
   public runUpsertPosition(
     mint: string,
@@ -328,16 +405,16 @@ export class StatePersistence {
     entryPriceUsd: number,
     data: Position
   ): void {
-    this._enqueueWorkerWrite('upsertPosition', [mint, symbol, name, openedAt, entryPriceUsd, data]);
+    this._enqueueWrite('upsertPosition', [mint, symbol, name, openedAt, entryPriceUsd, data]);
   }
   public runRemovePosition(mint: string): void {
-    this._enqueueWorkerWrite('removePosition', [mint]);
+    this._enqueueWrite('removePosition', [mint]);
   }
   public runUpsertMetric(key: string, value: string | number | Record<string, number>): void {
-    this._enqueueWorkerWrite('upsertMetric', [key, value]);
+    this._enqueueWrite('upsertMetric', [key, value]);
   }
   public runUpsertKV(key: string, value: string | boolean[]): void {
-    this._enqueueWorkerWrite('upsertKV', [key, value]);
+    this._enqueueWrite('upsertKV', [key, value]);
   }
   public runAddClosedTrade(
     mint: string,
@@ -349,7 +426,7 @@ export class StatePersistence {
     data: ClosedTrade,
     isGhost: number
   ): void {
-    this._enqueueWorkerWrite('addClosedTrade', [
+    this._enqueueWrite('addClosedTrade', [
       mint,
       symbol,
       exitReason,
@@ -361,28 +438,28 @@ export class StatePersistence {
     ]);
   }
   public runUpsertCooldown(mint: string, data: CoolDownEntry): void {
-    this._enqueueWorkerWrite('upsertCooldown', [mint, data]);
+    this._enqueueWrite('upsertCooldown', [mint, data]);
   }
   public runUpsertSnapshot(mint: string, data: MarketSnapshot): void {
-    this._enqueueWorkerWrite('upsertSnapshot', [mint, data]);
+    this._enqueueWrite('upsertSnapshot', [mint, data]);
   }
   public runUpsertLaunch(mint: string, timestamp: number, data: LaunchHistoryEntry): void {
-    this._enqueueWorkerWrite('upsertLaunch', [mint, timestamp, data]);
+    this._enqueueWrite('upsertLaunch', [mint, timestamp, data]);
   }
   public runUpsertRecheck(mint: string, data: RecheckItem): void {
-    this._enqueueWorkerWrite('upsertRecheck', [mint, data]);
+    this._enqueueWrite('upsertRecheck', [mint, data]);
   }
   public runRemoveCooldown(mint: string): void {
-    this._enqueueWorkerWrite('removeCooldown', [mint]);
+    this._enqueueWrite('removeCooldown', [mint]);
   }
   public runUpsertRetired(mint: string, data: RetiredMintEntry): void {
-    this._enqueueWorkerWrite('upsertRetired', [mint, data]);
+    this._enqueueWrite('upsertRetired', [mint, data]);
   }
   public runRemoveRetired(mint: string): void {
-    this._enqueueWorkerWrite('removeRetired', [mint]);
+    this._enqueueWrite('removeRetired', [mint]);
   }
   public runRemoveSnapshot(mint: string): void {
-    this._enqueueWorkerWrite('removeSnapshot', [mint]);
+    this._enqueueWrite('removeSnapshot', [mint]);
   }
   public runAddTrainingSample(
     mint: string,
@@ -402,7 +479,7 @@ export class StatePersistence {
     sequenceJson: string | null,
     holdTimeSeriesJson: string | null
   ): void {
-    this._enqueueWorkerWrite('addTrainingSample', [
+    this._enqueueWrite('addTrainingSample', [
       mint,
       symbol,
       label,
@@ -420,5 +497,159 @@ export class StatePersistence {
       sequenceJson,
       holdTimeSeriesJson,
     ]);
+    // Dual-write to shared reservoir (fire-and-forget, never blocks exit path)
+    this._writeToMlReservoir(
+      mint,
+      symbol,
+      label,
+      featuresJson,
+      realizedPnlUsd,
+      entryScore,
+      tpProfile,
+      launchpad,
+      closedAt,
+      exitReason,
+      holdSeconds,
+      highestPriceUsd,
+      targetsHit,
+      entryPriceUsd,
+      sequenceJson,
+      holdTimeSeriesJson
+    );
+  }
+
+  private async _importMlReservoir(reservoirPath: string, sessionDbPath: string): Promise<void> {
+    try {
+      const fs = await import('node:fs');
+      if (!fs.existsSync(reservoirPath)) return;
+      const { default: Database } = await import('better-sqlite3');
+      const reservoir = new (Database as unknown as new (
+        p: string,
+        o?: unknown
+      ) => {
+        prepare: (s: string) => {
+          all: (...a: unknown[]) => unknown[];
+          run: (...a: unknown[]) => unknown;
+        };
+        pragma: (s: string) => unknown;
+        close: () => void;
+      })(reservoirPath, { readonly: true } as unknown as Record<string, unknown>);
+      try {
+        const rows = (
+          reservoir as unknown as {
+            prepare: (s: string) => { all: (...a: unknown[]) => unknown[] };
+          }
+        )
+          .prepare(
+            `SELECT mint, symbol, label, features_json, realized_pnl_usd, entry_score, tp_profile, launchpad, closed_at, exit_reason, hold_seconds, highest_price_usd, targets_hit, entry_price_usd, sequence_json, hold_time_series_json FROM ml_training_samples ORDER BY closed_at DESC LIMIT 20000`
+          )
+          .all() as Array<Record<string, unknown>>;
+        if (rows.length === 0) return;
+        const insert = this._sqlite!.db.prepare(
+          `INSERT OR IGNORE INTO ml_training_samples (mint, symbol, label, features_json, realized_pnl_usd, entry_score, tp_profile, launchpad, closed_at, exit_reason, hold_seconds, highest_price_usd, targets_hit, entry_price_usd, sequence_json, hold_time_series_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        );
+        const tx = this._sqlite!.db.transaction((batch: typeof rows) => {
+          for (const r of batch) {
+            insert.run(
+              r.mint,
+              r.symbol,
+              r.label,
+              r.features_json,
+              r.realized_pnl_usd,
+              r.entry_score,
+              r.tp_profile,
+              r.launchpad,
+              r.closed_at,
+              r.exit_reason,
+              r.hold_seconds,
+              r.highest_price_usd,
+              r.targets_hit,
+              r.entry_price_usd,
+              r.sequence_json,
+              r.hold_time_series_json
+            );
+          }
+        });
+        tx(rows);
+        log(
+          this.config.logFile,
+          `ML reservoir: imported ${rows.length} samples from ${reservoirPath} into ${sessionDbPath}`,
+          'info'
+        );
+      } finally {
+        try {
+          (reservoir as unknown as { close: () => void }).close();
+        } catch {}
+      }
+    } catch (e: unknown) {
+      log(
+        this.config.logFile,
+        `ML reservoir import skipped: ${e instanceof Error ? e.message : String(e)}`,
+        'warn'
+      );
+    }
+  }
+
+  private _reservoirDb: InstanceType<typeof import('../db.js').SQLiteDb> | null = null;
+  private _reservoirInitialized = false;
+
+  private _writeToMlReservoir(
+    mint: string,
+    symbol: string,
+    label: number,
+    featuresJson: string,
+    realizedPnlUsd: number,
+    entryScore: number,
+    tpProfile: string | null,
+    launchpad: string | null,
+    closedAt: string,
+    exitReason: string | null,
+    holdSeconds: number | null,
+    highestPriceUsd: number | null,
+    targetsHit: number | null,
+    entryPriceUsd: number | null,
+    sequenceJson: string | null,
+    holdTimeSeriesJson: string | null
+  ): void {
+    const reservoirPath = (this.config as { mlReservoirFile?: string }).mlReservoirFile;
+    if (!reservoirPath) return;
+    try {
+      if (!this._reservoirInitialized) {
+        this._reservoirInitialized = true;
+        try {
+          const db = new SQLiteDb(reservoirPath, this.config.logFile);
+          db.init();
+          this._reservoirDb = db;
+        } catch {
+          return;
+        }
+      }
+      const db = this._reservoirDb;
+      if (!db) return;
+      db.db
+        .prepare(
+          `INSERT OR IGNORE INTO ml_training_samples (mint, symbol, label, features_json, realized_pnl_usd, entry_score, tp_profile, launchpad, closed_at, exit_reason, hold_seconds, highest_price_usd, targets_hit, entry_price_usd, sequence_json, hold_time_series_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          mint,
+          symbol,
+          label,
+          featuresJson,
+          realizedPnlUsd,
+          entryScore,
+          tpProfile,
+          launchpad,
+          closedAt,
+          exitReason,
+          holdSeconds,
+          highestPriceUsd,
+          targetsHit,
+          entryPriceUsd,
+          sequenceJson,
+          holdTimeSeriesJson
+        );
+    } catch {
+      // Best-effort: never throw on reservoir write
+    }
   }
 }

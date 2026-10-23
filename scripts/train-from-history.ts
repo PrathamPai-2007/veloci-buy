@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import Database from 'better-sqlite3';
-import { ScoringModel } from '../src/ml/scoring-model.js';
+import { ModelBucket } from '../src/ml/model-bucket.js';
 import { FEATURE_DIM } from '../src/ml/features.js';
 
 const OUTPUT_FILE = 'ml-pretrained-weights.json';
@@ -249,11 +249,11 @@ async function main() {
   }
 
   console.log('Training model...');
-  const model = new ScoringModel(1);
+  const model = new ModelBucket(1);
   await model.train(allSamples);
 
   const kvStore: Record<string, string> = {};
-  model.saveWeights((key, val) => {
+  model.saveWeights((key: string, val: string) => {
     kvStore[key] = val;
   });
   fs.writeFileSync(OUTPUT_FILE, JSON.stringify(kvStore, null, 2));

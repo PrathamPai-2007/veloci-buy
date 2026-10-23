@@ -8,9 +8,16 @@ import { appService } from '../src/services/services.js';
 import { portfolioService } from '../src/services/trading/portfolio.service.js';
 import { TokenMetadata } from '../src/types/index.js';
 
-// Mock Date.now to prevent timing issues on slow CI environments
 const MOCK_NOW = 1700000000000;
-Date.now = () => MOCK_NOW;
+const originalDateNow = Date.now;
+
+test.before(() => {
+  Date.now = () => MOCK_NOW;
+});
+
+test.after(() => {
+  Date.now = originalDateNow;
+});
 
 test('bot schedules survival delays using score-based timing tiers', () => {
   const { state, cleanup } = seedBotState();
@@ -496,8 +503,8 @@ test('bot does not promote failed survival candidates', async () => {
       evaluateCandidate: async () => ({
         approved: false,
         token,
-        blockers: ['Burst momentum failed.'],
-        rejectionReasons: [{ code: 'burst-filter', recheckEligible: false }],
+        blockers: ['Momentum failed.'],
+        rejectionReasons: [{ code: 'momentum-filter', recheckEligible: false }],
         notes: [],
         candidateScore: 80,
         volatilityScaler: 0,

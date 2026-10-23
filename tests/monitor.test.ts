@@ -634,7 +634,7 @@ test('monitor handles zero balance by recording a failed-confirmation trade and 
       assert.equal(ctx.state.closedTrades.length, 1);
       const trade = ctx.state.closedTrades[0]!;
       assert.equal(trade.mint, 'ZeroBalMint');
-      assert.equal(trade.exitReason, 'failed-confirmation');
+      assert.ok(trade.exitReason.startsWith('failed-confirmation'));
       assert.equal(trade.realizedPnlUsd, -100);
     }
   );

@@ -8,54 +8,32 @@ import { createTestConfig, withPatchedMembers } from './_test_helpers.js';
 import { VelociBuyBot } from '../src/core/bot.js';
 import { RAYDIUM_AMM_V4_PROGRAM_ID } from '../src/core/constants.js';
 import { StateStore } from '../src/core/store.js';
-import { GeyserClient, geyserOptionsFromEnv } from '../src/services/ingestion/geyser-client.js';
+import { GeyserClient, geyserOptionsFromConfig } from '../src/services/ingestion/geyser-client.js';
 import { tradingService } from '../src/services/trading/trading.service.js';
 
-test('geyserOptionsFromEnv is enabled by default but requires an endpoint', () => {
-  const prevEnabled = process.env.GEYSER_ENABLED;
-  const prevTcp = process.env.GEYSER_TCP_ADDR;
-  const prevSock = process.env.GEYSER_SOCKET_PATH;
-  try {
-    delete process.env.GEYSER_ENABLED;
-    delete process.env.GEYSER_TCP_ADDR;
-    delete process.env.GEYSER_SOCKET_PATH;
-    assert.equal(geyserOptionsFromEnv(), null, 'enabled by default but no endpoint -> null');
-
-    process.env.GEYSER_ENABLED = 'false';
-    process.env.GEYSER_TCP_ADDR = '127.0.0.1:9123';
-    assert.equal(geyserOptionsFromEnv(), null, 'explicitly disabled -> null');
-
-    process.env.GEYSER_ENABLED = 'true';
-    delete process.env.GEYSER_TCP_ADDR;
-    assert.equal(geyserOptionsFromEnv(), null, 'enabled but no endpoint → null');
-
-    process.env.GEYSER_TCP_ADDR = '127.0.0.1:9123';
-    const opts = geyserOptionsFromEnv();
-    assert.ok(opts);
-    assert.equal(opts!.tcpAddr, '127.0.0.1:9123');
-  } finally {
-    if (prevEnabled === undefined) delete process.env.GEYSER_ENABLED;
-    else process.env.GEYSER_ENABLED = prevEnabled;
-    if (prevTcp === undefined) delete process.env.GEYSER_TCP_ADDR;
-    else process.env.GEYSER_TCP_ADDR = prevTcp;
-    if (prevSock === undefined) delete process.env.GEYSER_SOCKET_PATH;
-    else process.env.GEYSER_SOCKET_PATH = prevSock;
-  }
+test('geyserOptionsFromConfig is enabled by default but requires an endpoint', () => {
+  const base = { geyserEnabled: true, geyserTcpAddr: '', geyserSocketPath: '' };
+  assert.equal(geyserOptionsFromConfig(base), null, 'enabled but no endpoint -> null');
+  assert.equal(
+    geyserOptionsFromConfig({ ...base, geyserEnabled: false, geyserTcpAddr: '127.0.0.1:9123' }),
+    null,
+    'explicitly disabled -> null'
+  );
+  const opts = geyserOptionsFromConfig({ ...base, geyserTcpAddr: '127.0.0.1:9123' });
+  assert.ok(opts);
+  assert.equal(opts!.tcpAddr, '127.0.0.1:9123');
 });
 
 test('VelociBuyBot startGeyserIfEnabled processes Raydium AMM V4 updates correctly', async () => {
   const config = createTestConfig({
     rpcUrls: ['http://localhost:8899'],
     wsRpcUrls: ['ws://localhost:8900'],
+    geyserEnabled: true,
+    geyserTcpAddr: '127.0.0.1:9000',
   });
   const walletSigner = { address: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq' } as any;
   const store = new StateStore(config);
   const bot = new VelociBuyBot(config, walletSigner, store);
-
-  const prevEnabled = process.env.GEYSER_ENABLED;
-  const prevTcp = process.env.GEYSER_TCP_ADDR;
-  process.env.GEYSER_ENABLED = 'true';
-  process.env.GEYSER_TCP_ADDR = '127.0.0.1:9000';
 
   const originalStart = GeyserClient.prototype.start;
   GeyserClient.prototype.start = () => {};
@@ -155,10 +133,6 @@ test('VelociBuyBot startGeyserIfEnabled processes Raydium AMM V4 updates correct
     );
   } finally {
     GeyserClient.prototype.start = originalStart;
-    if (prevEnabled === undefined) delete process.env.GEYSER_ENABLED;
-    else process.env.GEYSER_ENABLED = prevEnabled;
-    if (prevTcp === undefined) delete process.env.GEYSER_TCP_ADDR;
-    else process.env.GEYSER_TCP_ADDR = prevTcp;
 
     bot.stop();
     await (bot as any).performShutdown();

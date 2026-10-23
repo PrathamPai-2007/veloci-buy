@@ -10,3 +10,5 @@ export * from './store.js';
 export * from './db.js';
 export * from './migrate.js';
 export * from './pnl-analyzer.js';
+export * from './errors.js';
+export * from './config-view.js';

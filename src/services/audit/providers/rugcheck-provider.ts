@@ -1,0 +1,107 @@
+import { fetchJson, runBoundedPool, PRIORITY } from '#core/utils.js';
+import { Context, RugCheckSignals } from '#types/index.js';
+
+function rugcheckRateLimit(ctx: Context): { key: string; rps: number; priority: PRIORITY } {
+  return { key: 'rugcheck', rps: ctx.config.rugcheckRps || 1, priority: PRIORITY.LOW };
+}
+
+interface RugCheckRisk {
+  name: string;
+  level: 'danger' | 'warn' | string;
+}
+
+interface RugCheckReport {
+  score_normalised?: number;
+  risks?: RugCheckRisk[];
+  rugged?: boolean;
+}
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+export async function fetchRugCheckSignals(ctx: Context, mint: string): Promise<RugCheckSignals> {
+  const timeoutMs = 6000;
+  const headers: Record<string, string> = ctx.config.rugcheckApiKey
+    ? { Authorization: `Bearer ${ctx.config.rugcheckApiKey}` }
+    : {};
+  try {
+    const url = `${ctx.config.rugcheckBaseUrl}/tokens/${mint}/report`;
+    const payload = (await fetchJson(url, {
+      headers,
+      timeoutMs,
+      retries: 0,
+      rateLimit: rugcheckRateLimit(ctx),
+    })) as RugCheckReport;
+
+    const blockers: string[] = [];
+    const notes: string[] = [];
+
+    if (payload.rugged) {
+      blockers.push('RugCheck: token previously rugged.');
+    }
+
+    for (const risk of payload.risks ?? []) {
+      if (risk.level === 'danger') {
+        blockers.push(`RugCheck: ${risk.name}`);
+      } else if (risk.level === 'warn') {
+        notes.push(`RugCheck warn: ${risk.name}`);
+      }
+    }
+
+    const riskScore = payload.score_normalised ?? null;
+    if (riskScore != null) notes.push(`RugCheck score: ${riskScore}`);
+
+    return { status: 'ok', blockers, notes, riskScore, rugged: payload.rugged ?? false };
+  } catch (e: unknown) {
+    const message = getErrorMessage(e);
+    ctx.logger(`RugCheck fetch failed for ${mint}: ${message}`, 'warn');
+    return {
+      status: 'error',
+      blockers: [],
+      notes: [],
+      riskScore: null,
+      rugged: false,
+      error: message,
+    };
+  }
+}
+
+export async function fetchRugCheckWalletSignals(
+  ctx: Context,
+  addresses: string[]
+): Promise<string[]> {
+  if (addresses.length === 0) return [];
+  const headers: Record<string, string> = ctx.config.rugcheckApiKey
+    ? { Authorization: `Bearer ${ctx.config.rugcheckApiKey}` }
+    : {};
+  const results = await runBoundedPool(
+    addresses,
+    async (addr) => {
+      try {
+        const url = `${ctx.config.rugcheckBaseUrl}/wallet/${addr}/risk`;
+        const payload = (await fetchJson(url, {
+          headers,
+          timeoutMs: 3000,
+          retries: 0,
+          rateLimit: rugcheckRateLimit(ctx),
+        })) as {
+          riskLevel?: string;
+        };
+        return payload.riskLevel === 'high' ? addr : null;
+      } catch {
+        return null;
+      }
+    },
+    { concurrency: ctx.config.ownerAuditParallelism || 2 }
+  );
+  return results
+    .filter((r) => r.status === 'fulfilled' && r.value !== null)
+    .map((r) => r.value as string);
+}

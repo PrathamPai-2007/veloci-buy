@@ -1,11 +1,20 @@
-import { sleep, yieldEventLoop } from './io.js';
+import { yieldEventLoop } from './io.js';
 
+/**
+ * Normalizes a concurrency value to a valid positive integer.
+ * @param value - Candidate concurrency value.
+ * @param fallback - Fallback concurrency if invalid (default: 1).
+ * @returns Valid concurrency integer >= 1.
+ */
 export function normalizeConcurrency(value: unknown, fallback: number = 1): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < 1) return fallback;
   return Math.max(1, Math.floor(numeric));
 }
 
+/**
+ * Task execution record detailing task index, status, output/error, and duration.
+ */
 export interface TaskRecord<T = unknown> {
   index: number;
   item: T;
@@ -15,6 +24,13 @@ export interface TaskRecord<T = unknown> {
   durationMs: number;
 }
 
+/**
+ * Executes a list of asynchronous items concurrently using a bounded pool.
+ * @param items - Array of items to process.
+ * @param worker - Worker function processing each item.
+ * @param options - Pool configuration (concurrency, timeout, lifecycle hooks).
+ * @returns Array of TaskRecord results preserving original item order.
+ */
 export async function runBoundedPool<T = unknown>(
   items: T[],
   worker: (item: T, index: number) => Promise<unknown>,
@@ -39,15 +55,23 @@ export async function runBoundedPool<T = unknown>(
     options.onTaskStart?.({ item, index });
     try {
       const taskPromise = Promise.resolve().then(() => worker(item, index));
-      const value =
-        timeoutMs > 0
-          ? await Promise.race([
-              taskPromise,
-              sleep(timeoutMs).then(() => {
-                throw new Error(`Task timed out after ${timeoutMs}ms`);
-              }),
-            ])
-          : await taskPromise;
+      taskPromise.catch(() => {});
+      let value: unknown;
+      if (timeoutMs > 0) {
+        let timeoutHandle: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            reject(new Error(`Task timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
+        });
+        try {
+          value = await Promise.race([taskPromise, timeoutPromise]);
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
+      } else {
+        value = await taskPromise;
+      }
       const record: TaskRecord<T> = {
         index,
         item,

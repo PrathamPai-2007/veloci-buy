@@ -409,14 +409,14 @@ export class TuiService {
    */
   private _updateMetrics(): void {
     const state = this.store.state;
-    const closed = state.closedTrades as ClosedTrade[];
+    const closed = (state.closedTrades as ClosedTrade[]).filter((t) => !t.isGhost);
 
-    // Win rate based on all closed trades in current session history
+    // Win rate based on real closed trades only (ghost trades excluded)
     const totalTrades = closed.length;
     const wins = closed.filter((t) => t.realizedPnlUsd > 0).length;
     const winRate = totalTrades > 0 ? wins / totalTrades : 0;
 
-    // Profit Factor: sum of gains / sum of absolute losses
+    // Profit Factor: sum of gains / sum of absolute losses (real trades only)
     let totalGains = 0;
     let totalLosses = 0;
     for (const t of closed) {

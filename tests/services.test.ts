@@ -1,5 +1,6 @@
 'use strict';
 import { createCtx, withMockedFetch, withPatchedMembers } from './_test_helpers.js';
+import { jupiterDiscoveryBreaker } from '../src/services/jupiter-circuit-breaker.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { appService } from '../src/services/services.js';
@@ -7,6 +8,28 @@ import { tradingService } from '../src/services/trading/trading.service.js';
 import * as utils from '../src/core/utils.js';
 import { SOL_MINT } from '../src/core/config.js';
 import { TokenMetadata } from '../src/types/index.js';
+import { localMarketState } from '../src/services/market-state/local-market-state.js';
+
+function authorizeTestMint(mint: string, priceUsd: number, liquidityUsd: number): void {
+  localMarketState.updateSnapshot({
+    mint,
+    venue: 'pumpfun',
+    priceUsd,
+    liquidityUsd,
+    fdvUsd: priceUsd * 1_000_000_000,
+    totalSupply: 1_000_000_000_000_000n,
+    updatedAt: Date.now(),
+    sourceSlot: 1,
+    source: 'test-authoritative',
+    status: 'authoritative',
+    buyVolume1m: 1,
+    sellVolume1m: 0,
+    tradeCount1m: 1,
+    top5ConcentrationPct: 0,
+    top10ConcentrationPct: 0,
+    holderCount: 10,
+  });
+}
 
 test('services normalizes Jupiter price payloads with and without a data wrapper', async () => {
   const ctx = createCtx();
@@ -106,10 +129,8 @@ test('services backs off Jupiter (no per-mint fan-out) when the batch is rate-li
       assert.equal(prices['mint-a'], undefined);
       assert.equal(prices['mint-b'], undefined);
 
-      // A backoff window is armed so the next cycles skip Jupiter rather than hammering it.
-      assert.ok(
-        ctx.state.jupiterPriceCooldownUntil && ctx.state.jupiterPriceCooldownUntil > Date.now()
-      );
+      // The 429 opens the discovery breaker so the next cycles skip Jupiter rather than hammering it.
+      assert.equal(jupiterDiscoveryBreaker.getState(), 'OPEN');
 
       // Within the window, further price calls short-circuit without touching the network.
       const again = await appService.fetchPrices(ctx, ['mint-a']);
@@ -243,6 +264,7 @@ test('services paper buy and shutdown sell complete a profitable round trip', as
       return { ok: true, text: async () => JSON.stringify({ data: prices }) } as Response;
     },
     async () => {
+      authorizeTestMint('PaperMint', 2, 2000);
       const position = await appService.buyCandidate(ctx, {
         token: {
           id: 'PaperMint',
@@ -315,6 +337,7 @@ test('services live buy dry-run inspects balances but does not execute a swap', 
       },
     },
     async () => {
+      authorizeTestMint('5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq', 5, 2000);
       const position = await appService.buyCandidate(ctx, {
         token: {
           id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
@@ -451,6 +474,7 @@ test('services live buy reuses prefetched quote for smart retry', async () => {
       },
     },
     async () => {
+      authorizeTestMint('5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq', 5, 2000);
       const position = await appService.buyCandidate(
         ctx,
         {
@@ -542,6 +566,7 @@ test('services live buy persists nested BigInt audit metadata without failing th
           },
         },
         async () => {
+          authorizeTestMint('5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq', 5, 2000);
           const position = await appService.buyCandidate(ctx, {
             token: {
               id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
@@ -612,6 +637,7 @@ test('services live buy increments failure accounting when quoting fails', async
       },
     },
     async () => {
+      authorizeTestMint('SlippageMint', 2, 5000);
       const position = await appService.buyCandidate(ctx, {
         token: {
           id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
@@ -674,4 +700,23 @@ test('services buyCandidate handles simulated slippage in paper trading', async 
       assert.ok(stored.entryPriceUsd > 0);
     }
   );
+});
+
+test('VelociBuyBot addLogListener dispatches log messages to registered listeners', async () => {
+  const logs: string[] = [];
+  const logListeners = new Set<(msg: string) => void>();
+  const addLogListener = (fn: (msg: string) => void) => {
+    logListeners.add(fn);
+    return () => logListeners.delete(fn);
+  };
+
+  const unsubscribe = addLogListener((msg) => logs.push(msg));
+  for (const fn of logListeners) {
+    fn('Test log entry');
+  }
+
+  assert.equal(logs.length, 1);
+  assert.equal(logs[0], 'Test log entry');
+  unsubscribe();
+  assert.equal(logListeners.size, 0);
 });

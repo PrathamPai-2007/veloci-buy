@@ -2,10 +2,8 @@ import { formatUsd, ratioToPercentString } from '#core/utils.js';
 import { BURN_OWNERS } from '#core/config.js';
 import * as audit from '../audit/audit.service.js';
 import { Context, TokenMetadata, EvaluationResult, MintSignals } from '#types/index.js';
-import { mlService } from '#ml/ml-service.js';
-import { extractFeatures } from '#ml/features.js';
+import { marketDataProvider, localMarketState } from '../market-state/index.js';
 import { ghostTrader } from '#ml/ghost-trader.js';
-import { applyBurstOverlay } from '../burst/index.js';
 import {
   finiteNumber,
   getValidPriceHistory,
@@ -44,38 +42,7 @@ export { finiteNumber as finiteNumberHelper } from './scoring.js';
 const SURVIVAL_MOMENTUM_PASS_BAND_PCT = 2;
 const MARKET_CAP_PASS_BAND_PCT = 4;
 
-/**
- * Applies the ML scoring gate to an already rule-approved evaluation result.
- * In shadow mode the ML score is attached but never gates the trade.
- */
-function applyMlGate(result: EvaluationResult): EvaluationResult {
-  const mlScore = mlService.getScore(result);
-  if (!mlScore) return result;
-
-  const features = extractFeatures(result);
-  const mlFeaturesJson = JSON.stringify(Array.from(features));
-
-  if (mlScore.blocked && !mlScore.shadowMode) {
-    return {
-      ...result,
-      approved: false,
-      blockers: [...result.blockers, 'ML model confidence below threshold'],
-      rejectionReasons: [
-        ...result.rejectionReasons,
-        { code: 'ml-low-confidence', recheckEligible: true },
-      ],
-      mlScore,
-      mlFeaturesJson,
-    };
-  }
-
-  return {
-    ...result,
-    mlScore,
-    mlFeaturesJson,
-    tpProfileOverride: mlScore.shadowMode ? undefined : mlScore.tpProfile,
-  };
-}
+import { applyMlGate } from './evaluators/ml-gate-stage.js';
 
 /**
  * Performs a multi-stage evaluation of a token candidate.
@@ -109,6 +76,7 @@ export async function evaluateCandidate(
   preFetchedSignals?: MintSignals,
   opts?: { lightAudit?: boolean }
 ): Promise<EvaluationResult> {
+  ctx.store?.incrementMetric('candidateDiscoveries', 1);
   const blockers: string[] = [];
   const rejectionReasons: { code: string; recheckEligible: boolean }[] = [];
   const notes: string[] = [];
@@ -136,7 +104,14 @@ export async function evaluateCandidate(
   const fdv = finiteNumber(token.fdv);
   const holderCount = finiteNumber(token.holderCount);
   const organicScore = finiteNumber(token.organicScore);
-  const buys5m = finiteNumber(token.stats5m?.numBuys);
+  const tapeSwapVolume = marketDataProvider.getSwapVolume(token.id, 300_000);
+  const localSnap = localMarketState.getSnapshot(token.id);
+  const buys5m =
+    token.stats5m?.numBuys !== undefined && Number.isFinite(Number(token.stats5m.numBuys))
+      ? Number(token.stats5m.numBuys)
+      : tapeSwapVolume.tradeCount > 0
+        ? tapeSwapVolume.tradeCount
+        : (localSnap?.tradeCount1m ?? 0);
   const sells5m = finiteNumber(token.stats5m?.numSells);
 
   // Trending coins (from the Jupiter top-traded feed) are, by definition, ones the crowd is
@@ -300,13 +275,19 @@ export async function evaluateCandidate(
   const isUnbornMint = !(usdPrice > 0) && !(Number(liquidity) > 0) && buys5m === 0;
   const isNonPump = !!(normalizedLaunchpad && normalizedLaunchpad !== 'pump.fun');
 
+  const diagContext = `[LocalDataDiag] status=${localMarketState.getStateStatus(token.id)} priceSource=${token.usdPrice ? 'metadata' : (localSnap?.source ?? 'missing')} liqSource=${token.liquidity ? 'metadata' : localSnap ? 'local-state' : 'missing'} buySource=${token.stats5m?.numBuys !== undefined ? 'stats5m' : localSnap ? 'local-tape' : 'missing'} snapshotSlot=${localSnap?.sourceSlot ?? 0} snapshotUpdatedAt=${localSnap?.updatedAt ?? 0} statusType=${localSnap?.status ?? 'missing'} fallbackUsed=${!!localSnap}`;
+
   // Light audit hard-kill gates — categorically bad tokens regardless of any other signal
   if (!looksLikeMemecoin(ctx, token)) addBlocker('Does not match heuristic.', 'not-memecoin');
 
   // If Jupiter is behind for Raydium/Meteora, price will be 0. Soft-reject instead of hard-reject.
-  if (!(usdPrice > 0)) addBlocker('No price.', 'missing-price', isUnbornMint || isNonPump);
+  if (!(usdPrice > 0)) {
+    notes.push(diagContext);
+    addBlocker('No price.', 'missing-price', isUnbornMint || isNonPump);
+  }
 
   if (!Number.isFinite(liquidity) || liquidity < thresholds.minLiquidityUsd) {
+    notes.push(diagContext);
     addBlocker(
       `Low liquidity ${formatUsd(liquidity)}.`,
       'low-liquidity',
@@ -329,6 +310,7 @@ export async function evaluateCandidate(
 
   // Zero buys = literally dead token; configured minBuys5m floor is evaluated in heavy audit
   if (!reducedHistoricalSnapshot && buys5m === 0) {
+    notes.push(diagContext);
     addBlocker('Zero 5m buys.', 'zero-buys', isUnbornMint);
   }
 
@@ -376,7 +358,7 @@ export async function evaluateCandidate(
     };
   }
 
-  // Cheap depth: notify ghost and apply ML/burst overlay, then return.
+  // Cheap depth: notify ghost and apply the ML gate, then return.
   // Soft quality gates (holders, organic score, buys floor, social links, FDV/liq ratio,
   // top-holder %, score gate) are deferred to heavy audit so they fire after on-chain
   // safety signals are known and token quality can be assessed with full information.
@@ -392,14 +374,8 @@ export async function evaluateCandidate(
       adjustedThresholds: thresholds,
       token,
     };
-    ghostTrader.notifyCandidate(cheapResult);
-    return applyBurstOverlay(ctx, applyMlGate(cheapResult), {
-      priceHistory,
-      priceAtStartOfDelay,
-      liquidityAtStartOfDelay,
-      tapeAtStart,
-      tapeHistory,
-    });
+    ghostTrader.notifyCandidate(cheapResult, 'cheap');
+    return applyMlGate(cheapResult);
   }
 
   // Soft quality gates — heavy audit only, evaluated with full metadata context
@@ -477,7 +453,29 @@ export async function evaluateCandidate(
     };
   }
 
-  // Deep Audit
+  // GATING: If candidate is rejected by cheap local checks, or if depth is 'cheap', return immediately.
+  // Deep audit (including holder concentration & external signals) ONLY runs for candidates passing cheap gates.
+  if (blockers.length > 0 || depth === 'cheap' || opts?.lightAudit) {
+    if (blockers.length === 0) {
+      ctx.store?.incrementMetric('cheapGatePasses', 1);
+    }
+    return {
+      approved: blockers.length === 0,
+      candidateScore: entryScore,
+      rejectionReasons,
+      blockers,
+      notes,
+      volatilityScaler,
+      launchpadProfile,
+      adjustedThresholds: thresholds,
+      token,
+    };
+  }
+
+  // Deep Audit Gate — executed ONLY for candidates passing all cheap local gates
+  ctx.store?.incrementMetric('cheapGatePasses', 1);
+  ctx.store?.incrementMetric('deepAuditCandidates', 1);
+
   const emptyMintSignals: MintSignals = {
     decimals: 0,
     supplyRaw: 0n,
@@ -623,7 +621,7 @@ export async function evaluateCandidate(
   }
 
   // Re-entry Gate
-  const retired = ctx.state.retiredMints.get(token.id);
+  const retired = ctx.state?.retiredMints?.get(token.id);
   const lastExitPriceUsd = finiteNumber(retired?.lastExitPriceUsd, NaN);
   if (lastExitPriceUsd > 0 && usdPrice > 0) {
     const diff = ((usdPrice - lastExitPriceUsd) / lastExitPriceUsd) * 100;
@@ -649,14 +647,6 @@ export async function evaluateCandidate(
     rugCheckSignals,
     bubbleMapsSignals: bbSignals,
   };
-  if (deepResult.approved) ghostTrader.notifyCandidate(deepResult);
-  return deepResult.approved
-    ? applyBurstOverlay(ctx, applyMlGate(deepResult), {
-        priceHistory,
-        priceAtStartOfDelay,
-        liquidityAtStartOfDelay,
-        tapeAtStart,
-        tapeHistory,
-      })
-    : deepResult;
+  if (deepResult.approved) ghostTrader.notifyCandidate(deepResult, 'deep');
+  return deepResult.approved ? applyMlGate(deepResult) : deepResult;
 }

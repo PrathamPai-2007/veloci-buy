@@ -5,21 +5,17 @@ import {
   decodePumpCurve,
   PRIORITY,
   runBoundedPool,
+  jupiterRateLimit,
 } from '../core/utils.js';
 import { PUMP_FUN_PROGRAM_ID } from '../core/config.js';
 import { address, getProgramDerivedAddress, getAddressEncoder } from '@solana/addresses';
 import * as engine from './engine/engine.service.js';
 import * as trading from './trading/trading.service.js';
 import { Context, TokenMetadata } from '../types/index.js';
+import { localMarketState, priceHistoryEngine, marketDataProvider } from './market-state/index.js';
+import { jupiterDiscoveryBreaker, jupiterPositionBreaker } from './jupiter-circuit-breaker.js';
 
 const PUMP_FUN_CURVE_SEED = 'bonding-curve';
-
-/**
- * How long to skip Jupiter price calls after a 429, leaning on the on-chain price fallback.
- * Backing off (rather than retrying every cycle, or fanning a failed batch out into per-mint
- * retries) is what actually clears a rate limit instead of deepening it.
- */
-const JUPITER_PRICE_COOLDOWN_MS = 30_000;
 
 export type DirectMarketData = {
   usdPrice: number;
@@ -28,6 +24,13 @@ export type DirectMarketData = {
   source: string;
 };
 
+const PUMP_CURVE_CACHE_TTL_MS = 2000;
+const pumpCurveMicroCache = new Map<string, { data: DirectMarketData; fetchedAt: number }>();
+
+export function invalidatePumpCurveCache(mint: string): void {
+  pumpCurveMicroCache.delete(mint);
+}
+
 /**
  * Fetches recent token launches from Jupiter API.
  * @param ctx - The application context.
@@ -35,23 +38,19 @@ export type DirectMarketData = {
  */
 export async function fetchRecentLaunches(ctx: Context): Promise<TokenMetadata[]> {
   const url = `${ctx.config.jupiterBaseUrl}/tokens/v2/recent`;
-  try {
+  return jupiterDiscoveryBreaker.execute<TokenMetadata[]>(ctx, async () => {
     const data = (await fetchJson(url, {
       headers: { 'x-api-key': ctx.config.jupiterApiKey },
       timeoutMs: 5000,
-      retries: 1,
+      retries: 0,
+      rateLimit: jupiterRateLimit(ctx, ctx.config.jupiterApiKey, PRIORITY.LOW),
     })) as TokenMetadata[];
     if (!Array.isArray(data)) throw new Error('Unexpected Jupiter recent response shape.');
     return data.filter(
       (t) =>
         t?.id && (t.launchpad === 'pump.fun' || !t.launchpad || t.id.toLowerCase().endsWith('pump'))
     );
-  } catch (e: unknown) {
-    throw new Error(
-      `Failed to fetch recent launches: ${e instanceof Error ? e.message : String(e)}`,
-      { cause: e }
-    );
-  }
+  }, []);
 }
 
 /**
@@ -65,22 +64,18 @@ export async function fetchRecentLaunches(ctx: Context): Promise<TokenMetadata[]
 export async function fetchTrendingLaunches(ctx: Context): Promise<TokenMetadata[]> {
   const interval = ctx.config.trendingInterval || '5m';
   const url = `${ctx.config.jupiterBaseUrl}/tokens/v2/toptraded/${encodeURIComponent(interval)}`;
-  try {
+  return jupiterDiscoveryBreaker.execute<TokenMetadata[]>(ctx, async () => {
     const data = (await fetchJson(url, {
       headers: { 'x-api-key': ctx.config.jupiterApiKey },
       timeoutMs: 5000,
-      retries: 1,
+      retries: 0,
+      rateLimit: jupiterRateLimit(ctx, ctx.config.jupiterApiKey, PRIORITY.LOW),
     })) as TokenMetadata[];
     if (!Array.isArray(data)) throw new Error('Unexpected Jupiter toptraded response shape.');
     return data
       .filter((t) => t?.id && (t.launchpad === 'pump.fun' || t.id.toLowerCase().endsWith('pump')))
       .map((t) => ({ ...t, launchpad: t.launchpad || 'pump.fun', isTrending: true }));
-  } catch (e: unknown) {
-    throw new Error(
-      `Failed to fetch trending launches: ${e instanceof Error ? e.message : String(e)}`,
-      { cause: e }
-    );
-  }
+  }, []);
 }
 
 /**
@@ -95,6 +90,11 @@ export async function fetchDirectMarketData(
   mint: string,
   launchpadName: string | null = null
 ): Promise<DirectMarketData | null> {
+  const cached = pumpCurveMicroCache.get(mint);
+  if (cached && Date.now() - cached.fetchedAt < PUMP_CURVE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   let effectiveLaunchpad = launchpadName || ctx.state.marketSnapshots.get(mint)?.launchpad;
   if (!effectiveLaunchpad || effectiveLaunchpad === 'unknown') {
     if (mint.toLowerCase().endsWith('pump')) {
@@ -124,7 +124,7 @@ export async function fetchDirectMarketData(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,
       ],
-      { priority: PRIORITY.MEDIUM, cacheTtlMs: 2000 }
+      { priority: PRIORITY.MEDIUM, cacheTtlMs: 5000 }
     )) as { value: { data: string[] } | null };
 
     const data = account.value?.data;
@@ -141,12 +141,14 @@ export async function fetchDirectMarketData(
     const realSolReserves = Number(curve.realSolReserves) / 1e9;
     const liquidity = realSolReserves * 2 * solPrice;
 
-    return {
+    const result = {
       usdPrice,
       liquidity,
       isCompleted: curve.isCompleted,
       source: 'rpc-direct',
     };
+    pumpCurveMicroCache.set(mint, { data: result, fetchedAt: Date.now() });
+    return result;
   } catch (e: unknown) {
     ctx.logger(
       `Direct RPC market data fetch failed for ${mint}: ${e instanceof Error ? e.message : String(e)}`,
@@ -167,12 +169,26 @@ export async function batchFetchDirectMarketData(
   signal?: AbortSignal
 ): Promise<Record<string, DirectMarketData>> {
   try {
-    const pumpMints = mints.filter(
-      (m) =>
+    const now = Date.now();
+    const result: Record<string, DirectMarketData> = {};
+    const missingMints: string[] = [];
+
+    for (const m of mints) {
+      const isPump =
         m.toLowerCase().endsWith('pump') ||
-        ctx.state.marketSnapshots.get(m)?.launchpad === 'pump.fun'
-    );
-    if (pumpMints.length === 0) return {};
+        ctx.state.marketSnapshots.get(m)?.launchpad === 'pump.fun';
+      if (!isPump) continue;
+      const cached = pumpCurveMicroCache.get(m);
+      if (cached && now - cached.fetchedAt < PUMP_CURVE_CACHE_TTL_MS) {
+        result[m] = cached.data;
+      } else {
+        missingMints.push(m);
+      }
+    }
+
+    if (missingMints.length === 0) return result;
+
+    const pumpMints = missingMints;
 
     const programId = address(PUMP_FUN_PROGRAM_ID);
     const encoder = getAddressEncoder();
@@ -199,7 +215,6 @@ export async function batchFetchDirectMarketData(
       .map((r) => r.value);
 
     const solPrice = await trading.estimateSolUsdValue(ctx, 1000000000n);
-    const result: Record<string, DirectMarketData> = {};
 
     // ponytail: parallel chunks — sequential loop was the bottleneck (N chunks × 12s RPC timeout
     // = scan watchdog hits at 60s on WS bursts). Token bucket in rpcCall still rate-limits.
@@ -209,10 +224,8 @@ export async function batchFetchDirectMarketData(
       chunks.push(pdasWithMints.slice(i, i + chunkSize));
     }
 
-    // Burst-mode 429 hotspot: burst prices fresh pump.fun mints exclusively through these
-    // on-chain curve reads (Jupiter can't price them), and its tight recheck cadence bursts
-    // them in clusters. A public/free RPC will return 429 here under burst load — run burst
-    // only on a premium dedicated node. See docs/rate-limits.md (Solana RPC section).
+    // Fresh pump.fun mints are priced only through these curve reads (Jupiter can't price them);
+    // clustered scans can 429 a public node. See docs/rate-limits.md (Solana RPC section).
     const chunkResults = await Promise.allSettled(
       chunks.map(async (chunk) => {
         const res = (await rpcCall(
@@ -244,12 +257,14 @@ export async function batchFetchDirectMarketData(
           const vToken = Number(curve.virtualTokenReserves) / 1e6;
           if (vToken === 0) continue;
           const vSol = Number(curve.virtualSolReserves) / 1e9;
-          partial[mint] = {
+          const resData = {
             usdPrice: (vSol / vToken) * solPrice,
             liquidity: (Number(curve.realSolReserves) / 1e9) * 2 * solPrice,
             isCompleted: curve.isCompleted,
             source: 'rpc-direct',
           };
+          partial[mint] = resData;
+          pumpCurveMicroCache.set(mint, { data: resData, fetchedAt: Date.now() });
         }
         return partial;
       })
@@ -282,31 +297,27 @@ export async function fetchPrices(
 ): Promise<Record<string, { usdPrice: number; [key: string]: unknown }>> {
   if (mints.length === 0) return {};
 
-  // While rate-limited, skip Jupiter entirely and let the caller's on-chain fallback supply
-  // prices. This also stops a 429'd batch from fanning out into per-mint retries below — the
-  // amplification that turns one rate-limit into a storm of failing single-mint requests.
-  // Cooldown is keyed per account: monitor path (jupiterPositionApiKey) and scan path
-  // (jupiterApiKey) are independent — a monitor 429 must not suppress discovery price fetches.
-  const isPositionKey =
-    apiKey != null &&
-    apiKey === ctx.config.jupiterPositionApiKey &&
-    apiKey !== ctx.config.jupiterApiKey;
-  const cooldownField = isPositionKey
-    ? 'jupiterPositionPriceCooldownUntil'
-    : 'jupiterPriceCooldownUntil';
-  const cooldownUntil = ctx.state[cooldownField];
-  if (cooldownUntil != null && Date.now() < cooldownUntil) return {};
+  // Position-key calls (monitor/exits) use their own breaker and a higher-priority slot in
+  // the key's bucket, so discovery failures or load never starve position pricing.
+  const isPositionKey = apiKey != null && apiKey === ctx.config.jupiterPositionApiKey;
+  const breaker = isPositionKey ? jupiterPositionBreaker : jupiterDiscoveryBreaker;
+  const key = apiKey || ctx.config.jupiterApiKey;
 
+  const { allowed } = breaker.canExecute(ctx);
+  if (!allowed) return {};
+
+  breaker.recordRequest(ctx);
   const url = `${ctx.config.jupiterBaseUrl}/price/v3?ids=${encodeURIComponent(mints.join(','))}`;
 
   try {
     const response = (await fetchJson(url, {
-      headers: { 'x-api-key': apiKey || ctx.config.jupiterApiKey },
+      headers: { 'x-api-key': key },
       timeoutMs: 1500,
-      // No in-call retry: a 429 should trigger the cooldown backoff below, not an immediate
-      // re-request that deepens the rate limit. The on-chain fallback covers the gap.
       retries: 0,
+      rateLimit: jupiterRateLimit(ctx, key, isPositionKey ? PRIORITY.HIGH : PRIORITY.LOW),
     })) as { data?: Record<string, { usdPrice?: number; price?: number; [key: string]: unknown }> };
+
+    breaker.recordSuccess(ctx);
 
     const priceMap = (response?.data ?? response) as Record<
       string,
@@ -319,21 +330,15 @@ export async function fetchPrices(
       if (record) {
         normalized[id] = {
           ...record,
+          source: 'jupiter-price-api',
           usdPrice: Number(record.usdPrice || record.price || 0),
         };
       }
     }
     return normalized;
   } catch (e: unknown) {
-    if (isRateLimitError(e)) {
-      // The cooldown gate above suppresses further calls (and their log lines) for the window,
-      // so this warns once per rate-limit episode rather than once per token.
-      ctx.state[cooldownField] = Date.now() + JUPITER_PRICE_COOLDOWN_MS;
-      ctx.logger(
-        `Jupiter price API rate-limited (429); backing off ${JUPITER_PRICE_COOLDOWN_MS / 1000}s and using the on-chain price fallback.`,
-        'warn'
-      );
-    } else {
+    breaker.recordFailure(ctx, e);
+    if (!isRateLimitError(e)) {
       ctx.logger(
         `Jupiter price fetch failed: ${e instanceof Error ? e.message : String(e)}`,
         'warn'
@@ -433,7 +438,7 @@ export async function fetchPricesBestEffort(
 
   if (opts.onChainFirst) {
     // Curve-first: pump mints get their canonical on-chain price; Jupiter is used only for the
-    // non-pump residual it can actually price. Batch    // pump.fun curve reads into one
+    // non-pump residual it can actually price. Batch pump.fun curve reads into one
     // getMultipleAccounts call (LOW priority) instead of N individual getAccountInfo calls,
     // preventing RPC burst 429s during scan.
     const batchResult = await batchFetchDirectMarketData(ctx, uniqueMints, opts.signal);
@@ -491,6 +496,44 @@ export async function fetchPricesBestEffort(
     }
   }
 
+  // Sync all resolved prices into Local Market State Store & Price History Engine
+  const now = Date.now();
+  for (const [mint, rec] of Object.entries(prices)) {
+    if (rec && rec.usdPrice > 0) {
+      priceHistoryEngine.pushPrice(mint, 0, rec.usdPrice, now);
+      const existingSnap = localMarketState.getSnapshot(mint);
+      localMarketState.updateSnapshot({
+        mint,
+        venue:
+          (rec.launchpad as 'pumpfun' | 'raydium' | 'meteora') || existingSnap?.venue || 'pumpfun',
+        priceUsd: rec.usdPrice,
+        liquidityUsd: Number(rec.liquidity || existingSnap?.liquidityUsd || 0),
+        fdvUsd: Number(rec.fdvUsd || existingSnap?.fdvUsd || 0),
+        totalSupply: existingSnap?.totalSupply ?? 1_000_000_000_000_000n,
+        updatedAt: now,
+        sourceSlot: 0,
+        buyVolume1m: existingSnap?.buyVolume1m ?? 0,
+        sellVolume1m: existingSnap?.sellVolume1m ?? 0,
+        tradeCount1m: existingSnap?.tradeCount1m ?? 0,
+        top5ConcentrationPct: existingSnap?.top5ConcentrationPct ?? 0,
+        top10ConcentrationPct: existingSnapshotTop10(existingSnap),
+        holderCount: existingSnap?.holderCount ?? 0,
+        source: String(rec.source || 'market-data-fetch'),
+        status: 'authoritative',
+      });
+    }
+  }
+
+  // Local state fallback for any mints still unpriced after network attempts
+  for (const mint of uniqueMints) {
+    if (!prices[mint] || !(prices[mint].usdPrice > 0)) {
+      const localPrice = marketDataProvider.getPrice(mint);
+      if (localPrice != null && localPrice > 0) {
+        prices[mint] = { usdPrice: localPrice, source: 'local-market-state' };
+      }
+    }
+  }
+
   const duration = Date.now() - startedAt;
   if (duration > 2000) {
     ctx.logger(
@@ -500,4 +543,8 @@ export async function fetchPricesBestEffort(
   }
 
   return prices;
+}
+
+function existingSnapshotTop10(snap: ReturnType<typeof localMarketState.getSnapshot>): number {
+  return snap?.top10ConcentrationPct ?? 0;
 }

@@ -187,6 +187,7 @@ test('trailing stop trigger: label=0 when price retreats from peak', async () =>
     takeProfitMultiples: [2.0],
     trailingStopDrawdownPct: 0.2,
     minCandidateScore: 0,
+    minHoldTimeSeconds: 0,
   });
   ctx.store.addTrainingSample = (s) => savedSamples.push(s);
   gt.start(ctx, makeFakeMlService());

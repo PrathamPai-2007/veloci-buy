@@ -1,9 +1,9 @@
 {
   "name": "veloci-buy",
-  "version": "3.0.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "High-performance Solana discovery and execution engine with Jupiter execution and staged audit filters.",
+  "description": "Veloci-Buy — Solana sniper: sub-second discovery, staged audits, Jupiter/Jito execution.",
   "main": "dist/index.js",
   "engines": {
     "node": ">=20.19.0"
@@ -15,15 +15,17 @@
     "#types/*": "./dist/types/*"
   },
   "scripts": {
-    "dev": "cd website && npm run dev",
-    "dev:all": "node --import tsx scripts/start-all.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "check:types": "npm run typecheck",
     "build:rust": "cd rust-ml-core && napi build --platform --release",
     "build:rust:win": "powershell -NoProfile -File scripts/build-rust.ps1",
     "start": "tsx src/index.ts",
     "start:prod": "node dist/index.js",
-    "test": "node --import tsx --test tests/*.test.ts",
+    "test": "node --import tsx --test --experimental-test-snapshots \"tests/**/*.test.ts\"",
+    "test:ci": "node --import tsx --test --experimental-test-snapshots \"tests/**/*.test.ts\"",
+    "test:update-snapshots": "node --import tsx --test --experimental-test-snapshots --test-update-snapshots \"tests/**/*.test.ts\"",
+    "test:coverage": "node --import tsx --test --experimental-test-snapshots --experimental-test-coverage \"tests/**/*.test.ts\"",
     "check": "tsx scripts/check-syntax.ts",
     "lint": "eslint .",
     "format:check": "prettier --check .",
@@ -35,7 +37,7 @@
     "train-history": "node --import tsx scripts/train-from-history.ts",
     "fetch-data": "node --import tsx scripts/fetch-market-data.ts",
     "optimizer": "node --import tsx scripts/optimize.ts",
-    "ci": "npm run audit && npm run check && npm run lint && npm run format:check && npm run typecheck && npm run build && npm test"
+    "ci": "npm run check && npm run lint && npm run format:check && npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.48",

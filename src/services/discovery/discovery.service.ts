@@ -8,46 +8,29 @@ import {
   PUMP_FUN_CREATE_LOG_PATTERN,
   PUMP_FUN_MINT_LOG_PATTERN,
   PUMP_FUN_MINT_JSON_PATTERN,
-  PUMP_FUN_CREATE_EVENT_DISCRIMINATOR,
   RAYDIUM_INIT_LOG_PATTERN,
   METEORA_INIT_LOG_PATTERN,
   DISCOVERY_SIGNAL_RETENTION_MS,
 } from '#core/config.js';
-import { Context, TransactionData, ParsedInstruction } from '#types/index.js';
+import { Context, TransactionData } from '#types/index.js';
 import { WebSocket } from 'ws';
-import bs58 from 'bs58';
 
-/**
- * Extracts the new mint from a pump.fun `CreateEvent` carried on a `Program data:` log line. The
- * redeployed program no longer prints a human-readable `mint:` line, so this decodes the borsh event
- * inline to keep the WS fast-path (avoids the extra getTransaction the signature fallback needs).
- * Layout after the 8-byte discriminator: borsh string name, symbol, uri (each u32-LE length + bytes),
- * then the 32-byte mint pubkey. Returns null if the line isn't a CreateEvent or is malformed.
- */
-function decodePumpCreateEventMint(line: string): string | null {
-  if (!line.startsWith('Program data:')) return null;
-  let buf: Buffer;
-  try {
-    buf = Buffer.from(line.slice('Program data:'.length).trim(), 'base64');
-  } catch {
-    return null;
-  }
-  if (buf.length < 8 || !buf.subarray(0, 8).equals(PUMP_FUN_CREATE_EVENT_DISCRIMINATOR))
-    return null;
-  let pos = 8;
-  for (let i = 0; i < 3; i++) {
-    if (pos + 4 > buf.length) return null;
-    const len = buf.readUInt32LE(pos);
-    pos += 4 + len;
-  }
-  if (pos + 32 > buf.length) return null;
-  return bs58.encode(buf.subarray(pos, pos + 32));
-}
+import { decodePumpCreateEventMint } from './providers/pump-decoder.js';
+import { extractInitializedMints, getMatchingProgramId } from './providers/helius-subscriber.js';
 
 /**
  * DiscoveryService manages WebSocket subscriptions to program logs
  * to identify new token mints across multiple Solana programs.
  */
+const RECONNECT_BASE_MS = 5_000;
+const RECONNECT_MAX_MS = 60_000;
+
+/** Exponential backoff with ±20% jitter so all programs don't reconnect in lockstep. */
+function reconnectDelayMs(attempt: number): number {
+  const base = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** attempt);
+  return Math.round(base * (0.8 + Math.random() * 0.4));
+}
+
 export class DiscoveryService {
   private debounceTimer: NodeJS.Timeout | null = null;
   private pendingSignatures: Map<
@@ -67,6 +50,8 @@ export class DiscoveryService {
   private heliusBackoff = 1000;
   private isFlushing = false;
   private wsConsecutiveFailures = 0;
+  /** Consecutive reconnects per subscription key; reset when that stream delivers an event. */
+  private reconnectAttempts: Map<string, number> = new Map();
 
   public websocketReady = false;
 
@@ -191,38 +176,47 @@ export class DiscoveryService {
       const subscribePromise = rpcSub
         .slotNotifications()
         .subscribe({ abortSignal: controller.signal });
+      subscribePromise.catch(() => {});
 
       let timeoutId: NodeJS.Timeout | null = null;
-      const notifications = await Promise.race([
-        subscribePromise,
-        new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            controller.abort();
-            reject(new Error('Global heartbeat handshake timeout'));
-          }, ctx.config.websocketHandshakeTimeoutMs || 15000);
-          controller.signal.addEventListener('abort', () => {
-            if (timeoutId) clearTimeout(timeoutId);
-          });
-        }),
-      ]);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      const onAbort = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+      controller.signal.addEventListener('abort', onAbort);
+      let notifications: AsyncIterable<any>;
+      try {
+        notifications = await Promise.race([
+          subscribePromise,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Global heartbeat handshake timeout'));
+            }, ctx.config.websocketHandshakeTimeoutMs || 15000);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        controller.signal.removeEventListener('abort', onAbort);
       }
 
       for await (const _notification of notifications) {
         if (controller.signal.aborted) break;
         this.lastGlobalEventAt = Date.now();
+        this.reconnectAttempts.delete('heartbeat');
       }
       if (!controller.signal.aborted) {
         throw new Error('Global heartbeat subscription ended unexpectedly');
       }
     } catch (error: unknown) {
       if (this.globalSubscriptionController === controller) {
+        const attempt = this.reconnectAttempts.get('heartbeat') ?? 0;
+        this.reconnectAttempts.set('heartbeat', attempt + 1);
+        const delayMs = reconnectDelayMs(attempt);
         ctx.logger(
-          `Global WebSocket heartbeat failed: ${error instanceof Error ? error.message : String(error)}. Retrying in 5s...`,
+          `Global WebSocket heartbeat failed: ${error instanceof Error ? error.message : String(error)}. Retrying in ${(delayMs / 1000).toFixed(1)}s...`,
           'warn'
         );
-        await sleep(5000);
+        await sleep(delayMs);
         if (this.globalSubscriptionController === controller) {
           return this.subscribeGlobalHeartbeat(ctx);
         }
@@ -271,22 +265,27 @@ export class DiscoveryService {
           { commitment: 'processed' }
         )
         .subscribe({ abortSignal: controller.signal });
+      subscribePromise.catch(() => {});
 
       let timeoutId: NodeJS.Timeout | null = null;
-      const notifications = await Promise.race([
-        subscribePromise,
-        new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(() => {
-            controller.abort();
-            reject(new Error('Subscription handshake timeout'));
-          }, ctx.config.websocketHandshakeTimeoutMs || 15000);
-          controller.signal.addEventListener('abort', () => {
-            if (timeoutId) clearTimeout(timeoutId);
-          });
-        }),
-      ]);
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      const onAbort = () => {
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+      controller.signal.addEventListener('abort', onAbort);
+      let notifications: AsyncIterable<any>;
+      try {
+        notifications = await Promise.race([
+          subscribePromise,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Subscription handshake timeout'));
+            }, ctx.config.websocketHandshakeTimeoutMs || 15000);
+          }),
+        ]);
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+        controller.signal.removeEventListener('abort', onAbort);
       }
 
       this.websocketReady = true;
@@ -297,6 +296,7 @@ export class DiscoveryService {
 
       for await (const notification of notifications) {
         if (controller.signal.aborted) break;
+        this.reconnectAttempts.delete(programId);
         const val = notification?.value || notification;
         const slot = Number(notification?.context?.slot || 0);
         this.handleLog(ctx, val, programId, slot, scheduleDiscoverySignalFlush);
@@ -316,12 +316,15 @@ export class DiscoveryService {
           ctx.rotateRpcSubscriptions();
           return this.restartAllSubscriptions(ctx, scheduleDiscoverySignalFlush);
         }
+        const attempt = this.reconnectAttempts.get(programId) ?? 0;
+        this.reconnectAttempts.set(programId, attempt + 1);
+        const delayMs = reconnectDelayMs(attempt);
         ctx.logger(
-          `WebSocket logs subscription failed for ${programId}: ${error instanceof Error ? error.message : String(error)}. Retrying in 5s...`,
+          `WebSocket logs subscription failed for ${programId}: ${error instanceof Error ? error.message : String(error)}. Retrying in ${(delayMs / 1000).toFixed(1)}s...`,
           'warn',
           { console: true }
         );
-        await sleep(5000);
+        await sleep(delayMs);
         if (this.subscriptionControllers.get(programId) === controller) {
           return this.subscribe(ctx, programId, scheduleDiscoverySignalFlush);
         }
@@ -454,7 +457,8 @@ export class DiscoveryService {
                     maxSupportedTransactionVersion: 0,
                   },
                 ],
-                { priority: PRIORITY.HIGH }
+                // Discovery is scan traffic: never compete with monitor/exit reads.
+                { priority: PRIORITY.LOW }
               );
               return { tx: tx as unknown as TransactionData, programId, sig, success: true };
             } catch {
@@ -542,22 +546,7 @@ export class DiscoveryService {
    * Extracts initialized mint addresses from a parsed transaction.
    */
   private extractInitializedMints(tx: TransactionData): string[] {
-    const mints = new Set<string>();
-    const collect = (ixs: ParsedInstruction[] | undefined) => {
-      if (!Array.isArray(ixs)) return;
-      for (const ix of ixs) {
-        const parsed = ix?.parsed;
-        const type = String(parsed?.type || '').toLowerCase();
-        const info = parsed?.info;
-        const mint = info?.mint;
-        if ((type === 'initializemint' || type === 'initializemint2') && typeof mint === 'string')
-          mints.add(mint);
-      }
-    };
-    collect(tx?.transaction?.message?.instructions);
-    const meta = tx?.meta;
-    (meta?.innerInstructions || []).forEach((g) => collect(g?.instructions));
-    return Array.from(mints);
+    return extractInitializedMints(tx);
   }
 
   private startHeliusSubscription(ctx: Context, scheduleDiscoverySignalFlush: () => void): void {
@@ -662,14 +651,7 @@ export class DiscoveryService {
   }
 
   private getMatchingProgramId(result: any): string | null {
-    const accountKeys = result.transaction?.transaction?.message?.accountKeys || [];
-    const keys = accountKeys.map(
-      (k: any) => (typeof k === 'string' ? k : String(k?.pubkey || '')) as string
-    );
-    if (keys.includes(PUMP_FUN_PROGRAM_ID)) return PUMP_FUN_PROGRAM_ID;
-    if (keys.includes(RAYDIUM_AMM_V4_PROGRAM_ID)) return RAYDIUM_AMM_V4_PROGRAM_ID;
-    if (keys.includes(METEORA_DLMM_PROGRAM_ID)) return METEORA_DLMM_PROGRAM_ID;
-    return null;
+    return getMatchingProgramId(result);
   }
 }
 

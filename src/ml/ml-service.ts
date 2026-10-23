@@ -10,8 +10,7 @@ import {
 import { StateStore } from '#core/store.js';
 import { extractFeatures } from './features.js';
 import { buildSequence } from './sequence-features.js';
-import { EnsembleModel } from './ensemble-model.js';
-import { TrainMetrics } from './scoring-model.js';
+import { ModelBucket, TrainMetrics } from './model-bucket.js';
 import { RlExitOptimizer } from './rl-exit-optimizer.js';
 import {
   ENTRY_PARAM_SPECS,
@@ -26,6 +25,8 @@ import {
   scoreExitParams,
   restoreParams,
 } from './param-optimizer.js';
+import { checkGating } from './pipeline/inference-gate.js';
+import { recordRetrainMetrics } from './pipeline/training-pipeline.js';
 
 const DEFAULT_RETRAIN_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_MIN_SAMPLES = 25;
@@ -36,7 +37,7 @@ const MIN_GHOST_SAMPLES_FOR_OPTIMIZER = 15;
 const MAX_RETRAIN_HISTORY = 50;
 
 export class MlService {
-  private scoringModel: EnsembleModel | null = null;
+  private scoringModel: ModelBucket | null = null;
   private store: StateStore | null = null;
   private config: Config | null = null;
   private retrainTimer: NodeJS.Timeout | null = null;
@@ -62,7 +63,7 @@ export class MlService {
     );
     this.gateMinRealTrades = config.mlGateMinRealTrades;
     const minSamples = Number(process.env.ML_MIN_TRAINING_SAMPLES ?? DEFAULT_MIN_SAMPLES);
-    this.scoringModel = new EnsembleModel(minSamples);
+    this.scoringModel = new ModelBucket(minSamples);
     if (process.env.ML_RL_OPTIMIZER !== 'false') {
       this.rlOptimizer = new RlExitOptimizer();
     }
@@ -74,7 +75,7 @@ export class MlService {
     // NOTE: By design, the bot does not load 'ml:last_params' from the store at startup.
     // Starting fresh from standard yaml/env configuration baselines on reboot is an intentional
     // feature to prevent strategy parameters from suffering unbounded drift over long periods.
-    let loaded = this.scoringModel.loadWeights((key) => this.store!.getKV(key));
+    let loaded = this.scoringModel.loadWeights((key: string) => this.store!.getKV(key));
 
     if (!loaded) {
       const fallbackPath = 'ml-pretrained-weights.json';
@@ -84,9 +85,11 @@ export class MlService {
             string,
             string
           >;
-          loaded = this.scoringModel.loadWeights((key) => kvStore[key] ?? null);
+          loaded = this.scoringModel.loadWeights((key: string) => kvStore[key] ?? null);
           if (loaded) {
-            this.scoringModel.saveWeights((key, val) => this.store!.upsertKV(key, val));
+            this.scoringModel.saveWeights((key: string, val: string) =>
+              this.store!.upsertKV(key, val)
+            );
             log(
               this.logFile,
               '[ML] Loaded pre-trained weights from ml-pretrained-weights.json.',
@@ -101,7 +104,7 @@ export class MlService {
 
     // Warm-start the RL exit policy from persisted weights when enabled.
     if (this.rlOptimizer?.available()) {
-      const rlLoaded = this.rlOptimizer.loadWeights((key) => this.store!.getKV(key));
+      const rlLoaded = this.rlOptimizer.loadWeights((key: string) => this.store!.getKV(key));
       log(
         this.logFile,
         `[ML RL] Exit-parameter optimizer enabled. Persisted policy loaded: ${rlLoaded}.`,
@@ -237,7 +240,7 @@ export class MlService {
       this._recordRetrainMetrics(metrics);
     }
 
-    this.scoringModel.saveWeights((key, val) => this.store!.upsertKV(key, val));
+    this.scoringModel.saveWeights((key: string, val: string) => this.store!.upsertKV(key, val));
 
     // Re-check gate after retrain in case enough real trades have accumulated
     this._checkGating();
@@ -307,36 +310,94 @@ export class MlService {
     if (samples.length < this.config.entryTunerMinSamples) return;
 
     const current = extractCurrentEntryParams(this.config);
+    const beforePnl = (await import('./optimizers/entry-param-tuner.js')).replayEntryNetPnl(
+      samples,
+      current
+    );
     const gradients = estimateEntryGradients(samples, current, ENTRY_PARAM_SPECS);
-    const scoreBefore = this.config.minCandidateScore;
-    const changes = applyGradientStep(this.config, gradients, ENTRY_PARAM_SPECS);
-
-    // In a dead market every ghost trade is a loss, so the gradient is one-directional
-    // UP — the tuner would ratchet minCandidateScore higher and starve the bot of trades.
-    // Only allow it to RAISE the score gate once we have enough REAL closed trades to
-    // justify being pickier; downward (loosening) steps are always allowed so the
-    // "no trades → no data" deadlock can still break.
-    // Ghost trades don't count toward the "real data" guard — only on-chain outcomes justify
-    // tightening the score gate, which can starve the bot of trades if raised prematurely.
+    // Apply to a detached copy first so we can validate before mutating live Config
+    const beforeSnapshot = { ...current };
+    const tmpConfig = { ...this.config } as Config;
+    // copy mutable entry fields to tmp
+    Object.assign(tmpConfig, current);
+    const rawChanges = applyGradientStep(tmpConfig, gradients, ENTRY_PARAM_SPECS);
+    if (Object.keys(rawChanges).length === 0) return;
+    const afterParams = extractCurrentEntryParams(tmpConfig);
+    const afterPnl = (await import('./optimizers/entry-param-tuner.js')).replayEntryNetPnl(
+      samples,
+      afterParams
+    );
+    // Drift guard: revert entirely if replay PnL would drop
+    const tolerance = Math.max(1e-6, Math.abs(beforePnl) * 1e-3);
+    if (afterPnl < beforePnl - tolerance) {
+      log(
+        this.logFile,
+        `[Entry Tuner] Step rejected by drift guard — replay PnL would drop ${beforePnl.toFixed(2)} → ${afterPnl.toFixed(2)}. Params held.`,
+        'warn'
+      );
+      return;
+    }
+    // Starvation guard: any tightening move requires real-trade support
+    const { isTighteningMove } = await import('./optimizers/entry-param-tuner.js');
     const realTrades = this.store
       .getRecentClosedTrades(this.gateMinRealTrades * 10)
       .filter((t) => !t.isGhost).length;
-    if (realTrades < this.gateMinRealTrades && this.config.minCandidateScore > scoreBefore) {
-      this.config.minCandidateScore = scoreBefore;
-      delete changes['minCandidateScore'];
+    if (realTrades < this.gateMinRealTrades) {
+      let revertedTighten = false;
+      for (const k of Object.keys(afterParams)) {
+        const before = beforeSnapshot[k]!;
+        const after = afterParams[k]!;
+        if (isTighteningMove(k, before, after)) {
+          // revert this key in live config via tmp
+          (tmpConfig as unknown as Record<string, number>)[k] = before;
+          delete rawChanges[k];
+          revertedTighten = true;
+        }
+      }
+      if (revertedTighten) {
+        log(
+          this.logFile,
+          `[Entry Tuner] Tightening moves reverted — only ${realTrades} real trades (< ${this.gateMinRealTrades}). Loosening only until real data accumulates.`,
+          'warn'
+        );
+      }
+      if (Object.keys(rawChanges).length === 0) return;
+    }
+    // Commit validated changes to live Config
+    const finalChanges = applyGradientStep(this.config, gradients, ENTRY_PARAM_SPECS);
+    // Re-apply starvation-filtered reverts if needed (idempotent)
+    if (realTrades < this.gateMinRealTrades) {
+      for (const k of Object.keys(finalChanges)) {
+        const before = beforeSnapshot[k]!;
+        const after = (this.config as unknown as Record<string, number>)[k]!;
+        if (isTighteningMove(k, before, after)) {
+          (this.config as unknown as Record<string, number>)[k] = before;
+          delete finalChanges[k];
+        }
+      }
+      if (Object.keys(finalChanges).length === 0) return;
+    }
+    // Ephemeral by default: only persist to KV if explicitly opted in
+    if (this.config.entryTunerPersist) {
+      this.store.upsertKV(
+        'ml:entry_params',
+        JSON.stringify(extractCurrentEntryParams(this.config))
+      );
     }
 
-    this.store.upsertKV('ml:entry_params', JSON.stringify(extractCurrentEntryParams(this.config)));
-
-    const changedKeys = Object.keys(changes);
+    const changedKeys = Object.keys(finalChanges);
     if (changedKeys.length > 0) {
       const summary = changedKeys
         .map((k) => {
-          const c = changes[k]!;
+          const c = finalChanges[k]!;
           return `${k}: ${c.before.toFixed(2)} → ${c.after.toFixed(2)}`;
         })
         .join(', ');
-      log(this.logFile, `[Entry Tuner] ${summary} (from ${samples.length} samples)`, 'info');
+      log(
+        this.logFile,
+        `[Entry Tuner] ${summary} (from ${samples.length} samples, PnL ${beforePnl.toFixed(2)} → ${afterPnl.toFixed(2)})`,
+        'info'
+      );
     }
   }
 
@@ -351,7 +412,7 @@ export class MlService {
     const result = this.rlOptimizer.optimize(this.config, samples);
     if (!result) return false;
 
-    this.rlOptimizer.saveWeights((key, val) => this.store!.upsertKV(key, val));
+    this.rlOptimizer.saveWeights((key: string, val: string) => this.store!.upsertKV(key, val));
 
     const changedKeys = Object.keys(result.changes);
     const summary =
@@ -378,21 +439,7 @@ export class MlService {
    * and model degradation can be caught.
    */
   private _recordRetrainMetrics(metrics: TrainMetrics): void {
-    if (!this.store) return;
-    this.store.upsertKV('ml:lastRetrainMetrics', JSON.stringify(metrics));
-
-    let history: Array<TrainMetrics & { at: string }> = [];
-    try {
-      const raw = this.store.getKV('ml:retrainHistory');
-      if (raw) history = JSON.parse(raw) as Array<TrainMetrics & { at: string }>;
-    } catch {
-      history = [];
-    }
-    history.push({ ...metrics, at: new Date().toISOString() });
-    if (history.length > MAX_RETRAIN_HISTORY) {
-      history = history.slice(history.length - MAX_RETRAIN_HISTORY);
-    }
-    this.store.upsertKV('ml:retrainHistory', JSON.stringify(history));
+    recordRetrainMetrics(this.store, metrics, MAX_RETRAIN_HISTORY);
   }
 
   /**
@@ -438,19 +485,12 @@ export class MlService {
   }
 
   private _checkGating(): void {
-    if (this.gatingActive || !this.store) return;
-    // Ghost trades (isGhost=true) don't count — gate must be backed by real on-chain outcomes.
-    const realTrades = this.store
-      .getRecentClosedTrades(this.gateMinRealTrades * 10)
-      .filter((t) => !t.isGhost).length;
-    if (realTrades >= this.gateMinRealTrades) {
-      this.gatingActive = true;
-      log(
-        this.logFile,
-        `[ML] Gate activated after ${realTrades} real closed trades — now enforcing confidence threshold.`,
-        'info'
-      );
-    }
+    this.gatingActive = checkGating(
+      this.store,
+      this.gateMinRealTrades,
+      this.logFile,
+      this.gatingActive
+    );
   }
 
   private async _retrain(): Promise<void> {
@@ -487,7 +527,7 @@ export class MlService {
         this._recordRetrainMetrics(metrics);
       }
 
-      this.scoringModel.saveWeights((key, val) => this.store!.upsertKV(key, val));
+      this.scoringModel.saveWeights((key: string, val: string) => this.store!.upsertKV(key, val));
     }
 
     // 2. Re-check gate and run parameter optimizer (real trades + ghost samples combined)
