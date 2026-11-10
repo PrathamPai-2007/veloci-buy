@@ -21,6 +21,7 @@ import {
   type PumpCreateEvent,
 } from './providers/pump-decoder.js';
 import { ingestPumpTrade, watchMint } from '../market-state/pump-trade-ingest.js';
+import { registerLaunch } from '../market-state/launch-registry.js';
 import { extractInitializedMints, getMatchingProgramId } from './providers/helius-subscriber.js';
 
 /**
@@ -388,6 +389,7 @@ export class DiscoveryService {
         if (created) {
           extractedMint = created.mint;
           this.rememberCreate(created);
+          registerLaunch(created.mint, created.name, created.symbol);
           watchMint(created.mint);
           continue;
         }

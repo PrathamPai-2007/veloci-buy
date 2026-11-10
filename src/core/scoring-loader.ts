@@ -7,6 +7,7 @@ import {
   MoodThresholds,
   MomentumFilters,
   MomentumScoring,
+  TapeSignalWeights,
 } from '#types/scoring.js';
 import { safeConsole } from './utils.js';
 
@@ -26,6 +27,17 @@ const DEFAULT_SCORING: ScoringConfig = {
     volFdvHigh: 5,
     volFdvMid: 3,
     volFdvLow: -3,
+  },
+  tapeSignals: {
+    windowSeconds: 60,
+    minTrades: 3,
+    liquidityVelocityMax: 6,
+    liquidityVelocityFullSolPerSec: 0.1,
+    uniqueBuyersMax: 4,
+    uniqueBuyersFull: 8,
+    washPenalty: 0,
+    washWindowSeconds: 10,
+    copycatPenalty: 8,
   },
   moodThresholds: {
     winRateCritical: 0.2,
@@ -56,6 +68,7 @@ function validateScoringConfig(config: ScoringConfig): void {
 
   const numericFields: Array<{ obj: Record<string, unknown>; name: string }> = [
     { obj: config.scoringWeights as unknown as Record<string, unknown>, name: 'scoringWeights' },
+    { obj: config.tapeSignals as unknown as Record<string, unknown>, name: 'tapeSignals' },
     { obj: config.moodThresholds as unknown as Record<string, unknown>, name: 'moodThresholds' },
     { obj: config.momentumFilters as unknown as Record<string, unknown>, name: 'momentumFilters' },
     { obj: config.momentumScoring as unknown as Record<string, unknown>, name: 'momentumScoring' },
@@ -84,6 +97,7 @@ export function loadScoringConfig(): ScoringConfig {
 
     const config: ScoringConfig = {
       scoringWeights: { ...DEFAULT_SCORING.scoringWeights, ...parsed.scoringWeights },
+      tapeSignals: { ...DEFAULT_SCORING.tapeSignals, ...parsed.tapeSignals },
       moodThresholds: { ...DEFAULT_SCORING.moodThresholds, ...parsed.moodThresholds },
       momentumFilters: { ...DEFAULT_SCORING.momentumFilters, ...parsed.momentumFilters },
       momentumScoring: { ...DEFAULT_SCORING.momentumScoring, ...parsed.momentumScoring },
@@ -101,6 +115,7 @@ export function loadScoringConfig(): ScoringConfig {
 const scoringConfig = loadScoringConfig();
 
 export const SCORING_WEIGHTS: ScoringWeights = scoringConfig.scoringWeights;
+export const TAPE_SIGNALS: TapeSignalWeights = scoringConfig.tapeSignals;
 export const MOOD_THRESHOLDS: MoodThresholds = scoringConfig.moodThresholds;
 export const MOMENTUM_FILTERS: MomentumFilters = scoringConfig.momentumFilters;
 export const MOMENTUM_SCORING: MomentumScoring = scoringConfig.momentumScoring;

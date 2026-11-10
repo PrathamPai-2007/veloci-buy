@@ -75,6 +75,12 @@ depths.
     liquidity ratio, holders and volume/FDV. Weights are in
     [strategies/scoring.yaml](../strategies/scoring.yaml).
   - With `momentumScoringEnabled`, a signed momentum delta (about −10..+12) is added.
+  - Order flow from the pump.fun trade tape adds a delta (weights in `tapeSignals` in
+    [strategies/scoring.yaml](../strategies/scoring.yaml)): net SOL inflow per second (liquidity
+    velocity), distinct buyers, and an optional round-trip-wallet penalty. It is neutral until
+    the tape has `minTrades` trades. A launch that reuses the name+symbol of an earlier launch
+    this session loses `copycatPenalty` points, and a creator-wallet sale on the tape is a hard
+    reject (`creator-sold`).
   - The total must reach `minCandidateScore`. During trade starvation (`tradeStarvationMinutes`)
     the gate relaxes by `starvationRelaxStep`, down to `minCandidateScoreFloor`.
 

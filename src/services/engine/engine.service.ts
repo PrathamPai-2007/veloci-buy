@@ -1,5 +1,8 @@
 import { formatUsd, ratioToPercentString } from '#core/utils.js';
-import { BURN_OWNERS } from '#core/config.js';
+import { BURN_OWNERS, TAPE_SIGNALS } from '#core/config.js';
+import { analyzeTape, computeTapeScore } from './tape-signals.js';
+import { marketTapeManager } from '../market-state/market-tape-manager.js';
+import { isCopycat } from '../market-state/launch-registry.js';
 import * as audit from '../audit/audit.service.js';
 import { Context, TokenMetadata, EvaluationResult, MintSignals } from '#types/index.js';
 import { marketDataProvider, localMarketState } from '../market-state/index.js';
@@ -149,6 +152,26 @@ export async function evaluateCandidate(
     entryScore = Math.min(100, Math.max(0, entryScore + momentumDelta));
   }
 
+  // Order flow from the local trade tape: net SOL inflow (liquidity velocity), distinct buyers,
+  // round-trip wallets, and whether the launching wallet has sold. All free; neutral when the
+  // tape is thin. Copycat launches (same name+symbol as an earlier one) lose points.
+  const tapeSignals = analyzeTape(marketTapeManager.getTicks(token.id), {
+    creator: token.creator,
+    now,
+    windowSeconds: TAPE_SIGNALS.windowSeconds,
+    washWindowSeconds: TAPE_SIGNALS.washWindowSeconds,
+  });
+  entryScore = Math.min(100, Math.max(0, entryScore + computeTapeScore(tapeSignals, TAPE_SIGNALS)));
+  const copycat = isCopycat(token.id);
+  if (copycat) {
+    entryScore = Math.min(100, Math.max(0, entryScore - TAPE_SIGNALS.copycatPenalty));
+  }
+  if (tapeSignals.trades >= TAPE_SIGNALS.minTrades) {
+    notes.push(
+      `[Tape] trades=${tapeSignals.trades} inflow=${tapeSignals.netInflowSol.toFixed(2)}SOL (${tapeSignals.inflowPerSec.toFixed(3)}/s) buyers=${tapeSignals.uniqueBuyers} roundTrips=${tapeSignals.roundTripWallets}`
+    );
+  }
+
   let volatilityScaler = 0;
   if (validPriceHistory.length >= 5) {
     const prices = validPriceHistory.map((h) => h.price);
@@ -162,6 +185,11 @@ export async function evaluateCandidate(
     blockers.push(message);
     rejectionReasons.push({ code, recheckEligible });
   };
+
+  if (tapeSignals.creatorSold) {
+    addBlocker('Creator wallet has sold this token.', 'creator-sold', false);
+  }
+  if (copycat) notes.push('Copycat: name+symbol already used by an earlier launch.');
 
   // Reject tokens explicitly launched on a non-pump.fun platform (e.g. Raydium graduates).
   // Allow null/unknown — fresh mints often arrive untagged before Jupiter indexes their launchpad.

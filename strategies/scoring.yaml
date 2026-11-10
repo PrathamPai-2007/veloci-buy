@@ -15,6 +15,19 @@ scoringWeights:
   volFdvMid: 3
   volFdvLow: -3
 
+# Order-flow signals read from the pump.fun trade tape (free: no extra requests). Set a weight
+# to 0 to turn that signal off.
+tapeSignals:
+  windowSeconds: 60 # trailing tape window the signals are measured over
+  minTrades: 3 # fewer trades than this => neutral
+  liquidityVelocityMax: 6 # +/- score for net SOL inflow per second (strongest known predictor)
+  liquidityVelocityFullSolPerSec: 0.1 # inflow that earns the full score (~1 SOL per 10 s)
+  uniqueBuyersMax: 4 # bonus for distinct buying wallets
+  uniqueBuyersFull: 8 # distinct buyers that earn the full bonus
+  washPenalty: 0 # buy-then-sell round trips; 0 = detect and note only (research is ambiguous)
+  washWindowSeconds: 10
+  copycatPenalty: 8 # same name+symbol as an earlier launch seen this session
+
 moodThresholds:
   winRateCritical: 0.2
   winRateCautious: 0.4
