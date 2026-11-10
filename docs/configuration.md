@@ -196,8 +196,8 @@ All keys and defaults in `strategies/standard.yaml`, in file order. Units:
 | `discoveryPollIntervalMs`     | `20000` | Discovery loop period (Jupiter recent feed + WebSocket signal flush). Raised to at least 30000 on free-tier RPC.                   |
 | `discoveryWsEnabled`          | `true`  | Subscribe to program logs over WebSocket for new-mint signals.                                                                     |
 | `discoveryPumpEnabled`        | `true`  | Listen to pump.fun program logs.                                                                                                   |
-| `discoveryRaydiumEnabled`     | `true`  | Listen to Raydium AMM program logs.                                                                                                |
-| `discoveryMeteoraEnabled`     | `true`  | Listen to Meteora DLMM program logs.                                                                                               |
+| `discoveryRaydiumEnabled`     | `false` | Listen to Raydium AMM program logs. Off by default: the engine rejects non-pump.fun launchpads.                                    |
+| `discoveryMeteoraEnabled`     | `false` | Listen to Meteora DLMM program logs. Off by default for the same reason.                                                           |
 | `discoveryWsDebounceMs`       | `500`   | Debounce window for batching WebSocket mint signals before they reach the scanner.                                                 |
 | `trendingDiscoveryEnabled`    | `true`  | Poll the Jupiter top-traded feed and queue trending pump.fun tokens.                                                               |
 | `trendingPollIntervalMs`      | `20000` | Trending feed poll period.                                                                                                         |
@@ -267,7 +267,7 @@ All keys and defaults in `strategies/standard.yaml`, in file order. Units:
 | `maxRecheckAttempts`             | `2`     | Maximum rechecks for a candidate before it is dropped.                                                       |
 | `recheckPriceDropPct`            | `15`    | Drop a recheck entry if price fell more than this (%) from its high.                                         |
 | `borderlineRecheckEnabled`       | `true`  | Recheck candidates that miss the score gate by a small margin.                                               |
-| `borderlineRecheckMinDelayMs`    | `2`     | Delay before a borderline or waitlist recheck.                                                               |
+| `borderlineRecheckMinDelayMs`    | `2000`  | Delay before a borderline or waitlist recheck.                                                               |
 | `borderlineThresholdBufferRatio` | `0.2`   | How close to the gate (ratio) a score must be to count as borderline.                                        |
 | `holderCountWaitlistSeconds`     | `33`    | Waitlist delay for tokens below `minHolderCount`.                                                            |
 | `reentryDipPct`                  | `15`    | Re-entering a previously traded mint is blocked unless price dipped more than this (%) from the last exit... |

@@ -10,8 +10,10 @@ scanIntervalMs: 4000
 discoveryPollIntervalMs: 20000
 discoveryWsEnabled: true
 discoveryPumpEnabled: true
-discoveryRaydiumEnabled: true
-discoveryMeteoraEnabled: true
+# Off: the engine only buys pump.fun, so Raydium/Meteora pool-init signals cost a getTransaction
+# and a Jupiter price call each and are then rejected as wrong-launchpad.
+discoveryRaydiumEnabled: false
+discoveryMeteoraEnabled: false
 discoveryWsDebounceMs: 500
 trendingDiscoveryEnabled: true
 trendingPollIntervalMs: 20000
@@ -91,7 +93,7 @@ maxSellPressureIncreasePct: 110
 maxRecheckAttempts: 2
 recheckPriceDropPct: 15
 borderlineRecheckEnabled: true
-borderlineRecheckMinDelayMs: 2
+borderlineRecheckMinDelayMs: 2000
 borderlineThresholdBufferRatio: 0.2
 holderCountWaitlistSeconds: 33
 reentryDipPct: 15
