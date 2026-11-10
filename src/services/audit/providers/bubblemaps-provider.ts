@@ -1,15 +1,5 @@
-import { fetchJson, ratioToPercentString, PRIORITY } from '#core/utils.js';
+import { fetchJson, getErrorMessage, ratioToPercentString, PRIORITY } from '#core/utils.js';
 import { Context, BubbleMapsSignals } from '#types/index.js';
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
-}
 
 export async function fetchBubbleMapsSignals(
   ctx: Context,

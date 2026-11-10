@@ -1,4 +1,4 @@
-import { runBoundedPool, PRIORITY, derivePumpCurvePda } from '#core/utils.js';
+import { runBoundedPool, PRIORITY, derivePumpCurvePda, isPumpMintAddress } from '#core/utils.js';
 import { appService } from '../services.js';
 import { portfolioService } from '../trading/portfolio.service.js';
 import { Context, RecheckItem, TokenMetadata, EvaluationResult, SwapOrder } from '#types/index.js';
@@ -48,7 +48,7 @@ export async function scanForCandidates(
 
   for (const t of actualDiscovery) {
     if (t.id) {
-      const isPump = t.launchpad === 'pump.fun' || t.id.toLowerCase().endsWith('pump');
+      const isPump = t.launchpad === 'pump.fun' || isPumpMintAddress(t.id);
       if (isPump) {
         registerPumpMintPda(ctx, t.id);
         // Start collecting this mint's trades from the log stream (free) right away.

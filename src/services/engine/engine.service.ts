@@ -1,4 +1,4 @@
-import { formatUsd, ratioToPercentString } from '#core/utils.js';
+import { formatUsd, isPumpMintAddress, ratioToPercentString } from '#core/utils.js';
 import { BURN_OWNERS, TAPE_SIGNALS } from '#core/config.js';
 import { analyzeTape, computeTapeScore } from './tape-signals.js';
 import { marketTapeManager } from '../market-state/market-tape-manager.js';
@@ -37,10 +37,6 @@ export {
   isSlightlyBelowThreshold,
   computeEffectiveMinScore,
 } from './scoring.js';
-
-// Legacy aliases kept for callers that import these names.
-export { countSocialLinks as countSocialLinksHelper } from './scoring.js';
-export { finiteNumber as finiteNumberHelper } from './scoring.js';
 
 const SURVIVAL_MOMENTUM_PASS_BAND_PCT = 2;
 const MARKET_CAP_PASS_BAND_PCT = 4;
@@ -547,8 +543,8 @@ export async function evaluateCandidate(
   }
 
   // Authentic Pump.fun verification
-  if (token.launchpad === 'pump.fun' || token.id.toLowerCase().endsWith('pump')) {
-    if (!token.id.toLowerCase().endsWith('pump')) {
+  if (token.launchpad === 'pump.fun' || isPumpMintAddress(token.id)) {
+    if (!isPumpMintAddress(token.id)) {
       addBlocker('Fake pump.fun token: address does not end in pump.', 'fake-pump-token', false);
     }
     if (mintSignals.decimals !== 6 && mintSignals.decimals !== 0) {

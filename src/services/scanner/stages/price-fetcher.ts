@@ -1,5 +1,6 @@
 import { registerPumpMintPda } from '../../../core/bot-internals/geyser-coordinator.js';
 import { SOL_MINT } from '#core/config.js';
+import { isPumpMintAddress } from '#core/utils.js';
 import { Context, TokenMetadata, SwapOrder } from '#types/index.js';
 import { fetchSdkSwapOrder } from '../../trading/swap-executor.js';
 
@@ -29,7 +30,7 @@ export function refreshMarketSnapshots(ctx: Context, discoveryItems?: TokenMetad
         usdPrice: Number(t.usdPrice || 0),
         observedAt: new Date().toISOString(),
       });
-      if (t.launchpad === 'pump.fun' || t.id.toLowerCase().endsWith('pump')) {
+      if (t.launchpad === 'pump.fun' || isPumpMintAddress(t.id)) {
         registerPumpMintPda(ctx, t.id);
       }
     }

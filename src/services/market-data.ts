@@ -5,6 +5,7 @@ import {
   decodePumpCurve,
   PRIORITY,
   jupiterRateLimit,
+  isPumpMintAddress,
 } from '../core/utils.js';
 import { PUMP_FUN_PROGRAM_ID } from '../core/config.js';
 import { address, getProgramDerivedAddress, getAddressEncoder } from '@solana/addresses';
@@ -46,8 +47,7 @@ export async function fetchRecentLaunches(ctx: Context): Promise<TokenMetadata[]
     })) as TokenMetadata[];
     if (!Array.isArray(data)) throw new Error('Unexpected Jupiter recent response shape.');
     return data.filter(
-      (t) =>
-        t?.id && (t.launchpad === 'pump.fun' || !t.launchpad || t.id.toLowerCase().endsWith('pump'))
+      (t) => t?.id && (t.launchpad === 'pump.fun' || !t.launchpad || isPumpMintAddress(t.id))
     );
   }, []);
 }
@@ -72,7 +72,7 @@ export async function fetchTrendingLaunches(ctx: Context): Promise<TokenMetadata
     })) as TokenMetadata[];
     if (!Array.isArray(data)) throw new Error('Unexpected Jupiter toptraded response shape.');
     return data
-      .filter((t) => t?.id && (t.launchpad === 'pump.fun' || t.id.toLowerCase().endsWith('pump')))
+      .filter((t) => t?.id && (t.launchpad === 'pump.fun' || isPumpMintAddress(t.id)))
       .map((t) => ({ ...t, launchpad: t.launchpad || 'pump.fun', isTrending: true }));
   }, []);
 }
@@ -96,7 +96,7 @@ export async function fetchDirectMarketData(
 
   let effectiveLaunchpad = launchpadName || ctx.state.marketSnapshots.get(mint)?.launchpad;
   if (!effectiveLaunchpad || effectiveLaunchpad === 'unknown') {
-    if (mint.toLowerCase().endsWith('pump')) {
+    if (isPumpMintAddress(mint)) {
       effectiveLaunchpad = 'pump.fun';
     }
   }
@@ -178,8 +178,7 @@ export async function batchFetchDirectMarketData(
 
     for (const m of mints) {
       const isPump =
-        m.toLowerCase().endsWith('pump') ||
-        ctx.state.marketSnapshots.get(m)?.launchpad === 'pump.fun';
+        isPumpMintAddress(m) || ctx.state.marketSnapshots.get(m)?.launchpad === 'pump.fun';
       if (!isPump) continue;
       const cached = pumpCurveMicroCache.get(m);
       if (cached && now - cached.fetchedAt < PUMP_CURVE_CACHE_TTL_MS) {
@@ -357,7 +356,7 @@ export async function fetchPrices(
  * on-chain curve, so the scan path can skip Jupiter for them entirely.
  */
 function isPumpMint(ctx: Context, mint: string): boolean {
-  if (mint.toLowerCase().endsWith('pump')) return true;
+  if (isPumpMintAddress(mint)) return true;
   return ctx.state.marketSnapshots.get(mint)?.launchpad === 'pump.fun';
 }
 

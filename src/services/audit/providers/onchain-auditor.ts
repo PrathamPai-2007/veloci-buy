@@ -1,6 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { address } from '@solana/addresses';
-import { sleep, rpcCall, bigintRatioToNumber, derivePumpCurvePda } from '#core/utils.js';
+import {
+  sleep,
+  rpcCall,
+  bigintRatioToNumber,
+  derivePumpCurvePda,
+  getErrorMessage,
+} from '#core/utils.js';
 import { Context, MintSignals } from '#types/index.js';
 import { tokenAccountIndex } from '#services/account-index/index.js';
 
@@ -19,16 +25,6 @@ interface ParsedAccountInfo {
 
 interface ParsedData {
   parsed: ParsedAccountInfo;
-}
-
-function getErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
 }
 
 /** Holders reported in MintSignals. One extra is fetched so dropping the bonding curve leaves 5. */

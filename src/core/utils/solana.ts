@@ -15,6 +15,11 @@ export function normalizeLaunchpad(value: string): string {
     .toLowerCase();
 }
 
+/** pump.fun mints are vanity addresses ending in `pump`. */
+export function isPumpMintAddress(mint: string): boolean {
+  return typeof mint === 'string' && mint.toLowerCase().endsWith('pump');
+}
+
 export function deriveWsRpcUrl(rpcUrl: string): string {
   try {
     const parsedUrl = new URL(rpcUrl);

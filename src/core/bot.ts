@@ -12,6 +12,7 @@ import {
   atomicToDecimalString,
   setConsoleSuppressed,
   setRpcRateLimits,
+  isPumpMintAddress,
 } from './utils.js';
 import { localMarketState } from '#services/market-state/index.js';
 
@@ -414,9 +415,8 @@ export class VelociBuyBot {
         if (wsMints) {
           const launchpads = wsLaunchpads || {};
           discoveryItems = wsMints.map((mint) => {
-            const lp =
-              launchpads[mint] || (mint.toLowerCase().endsWith('pump') ? 'pump.fun' : 'unknown');
-            if (lp === 'pump.fun' || mint.toLowerCase().endsWith('pump')) {
+            const lp = launchpads[mint] || (isPumpMintAddress(mint) ? 'pump.fun' : 'unknown');
+            if (lp === 'pump.fun' || isPumpMintAddress(mint)) {
               registerPumpMintPda(this.getCtx(), mint);
               const provSnap = localMarketState.getSnapshot(mint);
               if (provSnap) {

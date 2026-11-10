@@ -3,6 +3,17 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 import { Context, LogLevel } from '#types/index.js';
 
+/** Best-effort message from anything that was thrown. */
+export function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export function ensureParentDirectory(filePath: string): void {
   const directory = path.dirname(path.resolve(filePath));
   fs.mkdirSync(directory, { recursive: true });

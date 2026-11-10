@@ -1,4 +1,5 @@
 import { Context, TokenMetadata } from '#types/index.js';
+import { isPumpMintAddress } from '#core/utils.js';
 import { scanForCandidates } from './scan-executor.js';
 import { registerPumpMintPda } from '../../core/bot-internals/geyser-coordinator.js';
 
@@ -44,7 +45,7 @@ export class ScanCoordinatorService {
       for (const item of discoveryItems) {
         if (item.id && !ctx.state.processedMints.has(item.id)) {
           this.pendingDiscoveryItems.set(item.id, item);
-          if (item.launchpad === 'pump.fun' || item.id.toLowerCase().endsWith('pump')) {
+          if (item.launchpad === 'pump.fun' || isPumpMintAddress(item.id)) {
             pdaRegistrations.push(registerPumpMintPda(ctx, item.id));
           }
         }

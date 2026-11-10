@@ -690,7 +690,7 @@ export class DiscoveryService {
 // Export a singleton instance for backward compatibility or shared state
 export const discoveryService = new DiscoveryService();
 
-// Re-export functional wrappers to maintain original API if needed
+/** Function form of `discoveryService.handleLog` (slot unknown), kept for tests. */
 export function handleDiscoveryProgramLog(
   ctx: Context,
   logInfo: unknown,
@@ -698,23 +698,4 @@ export function handleDiscoveryProgramLog(
   scheduleDiscoverySignalFlush: () => void
 ): void {
   discoveryService.handleLog(ctx, logInfo, programId, 0, scheduleDiscoverySignalFlush);
-}
-
-export async function flushDiscoverySignals(
-  ctx: Context,
-  runLoop: (req: Record<string, unknown>) => Promise<void>
-): Promise<void> {
-  return discoveryService.flush(ctx, runLoop);
-}
-
-/** @deprecated Use discoveryService.start() / discoveryService.stop() instead.
- *  The returned AbortController is a stub — call discoveryService.stop() to
- *  tear down all subscriptions. */
-export async function subscribeToProgramLogs(
-  ctx: Context,
-  programId: string,
-  scheduleDiscoverySignalFlush: () => void
-): Promise<AbortController> {
-  void discoveryService.subscribe(ctx, programId, scheduleDiscoverySignalFlush);
-  return new AbortController();
 }
