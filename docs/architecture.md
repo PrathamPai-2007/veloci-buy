@@ -69,12 +69,12 @@ src/
 │   └── utils/                   solana.ts (rpcCall), fetch.ts (fetchJson), rate-limit.ts,
 │                                io.ts, math.ts, pool.ts, crypto.ts, notifier.ts
 ├── services/
-│   ├── discovery/               WebSocket log ingestion, Helius subscriber, pump decoder
+│   ├── discovery/               WebSocket log ingestion, Helius subscriber, pump CreateEvent/TradeEvent decoder
 │   ├── ingestion/               Geyser client
 │   ├── scanner/                 coordinator, scheduler, executor, stages
-│   ├── engine/                  evaluation (engine.service.ts), scoring, ML gate stage
+│   ├── engine/                  evaluation (engine.service.ts), deep-audit.ts, scoring.ts, tape-signals.ts, ML gate stage
 │   ├── audit/                   on-chain auditor, RugCheck, BubbleMaps
-│   ├── market-state/            local price/liquidity/tape state, pool decoders
+│   ├── market-state/            local price/liquidity/tape state, pool decoders, pump-trade-ingest, launch-registry
 │   ├── account-index/           token-account index (top-holder tracking)
 │   ├── market-data.ts           Jupiter feeds and prices, on-chain curve prices
 │   ├── jupiter-circuit-breaker.ts
@@ -113,8 +113,10 @@ src/
 Market data has two sources:
 
 - **Local market state** (`services/market-state/`) holds price, liquidity and swap tape, fed
-  by Geyser, vault subscriptions and curve reads. It's free and fast, so the monitor and the
-  scanner check it first.
+  by pump.fun `TradeEvent`s on the program-log subscription (`pump-trade-ingest.ts`, watched
+  mints only), Geyser, vault subscriptions and curve reads. It's free and fast, so the monitor
+  and the scanner check it first, and the scanner builds its price history, trade-tape and
+  high-water-mark inputs from it (`scanner/stages/local-inputs.ts`).
 - **Remote sources** are Jupiter prices and RPC `getAccountInfo`/`getMultipleAccounts` curve
   reads. They're used only when local state is missing or stale.
 
