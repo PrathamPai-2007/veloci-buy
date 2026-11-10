@@ -83,6 +83,8 @@ export class SecurityAuditWorker {
           this.securitySignalCache.set(mint, { signals, fetchedAt: Date.now() });
           const pos = ctx.state.positions.get(mint);
           if (pos) {
+            // Keep the entry-time holder snapshot: the insider-drift rule compares against it.
+            pos.entryMintSignals ??= pos.mintSignals;
             pos.mintSignals = signals;
           }
         }

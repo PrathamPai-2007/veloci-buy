@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { address } from '@solana/addresses';
-import { sleep, rpcCall, bigintRatioToNumber } from '#core/utils.js';
+import { sleep, rpcCall, bigintRatioToNumber, derivePumpCurvePda } from '#core/utils.js';
 import { Context, MintSignals } from '#types/index.js';
 import { tokenAccountIndex } from '#services/account-index/index.js';
 
@@ -29,6 +29,27 @@ function getErrorMessage(error: unknown): string {
   } catch {
     return String(error);
   }
+}
+
+/** Holders reported in MintSignals. One extra is fetched so dropping the bonding curve leaves 5. */
+const TOP_HOLDER_COUNT = 5;
+const TOP_HOLDER_FETCH = TOP_HOLDER_COUNT + 1;
+
+/** Drops token accounts owned by the pump.fun bonding-curve PDA (`''` = unknown, keep all). */
+export function dropCurveAccounts<T extends { owner?: string | null }>(
+  accounts: T[],
+  curvePda: string
+): T[] {
+  return curvePda ? accounts.filter((a) => a.owner !== curvePda) : accounts;
+}
+
+function concentrationShares(accounts: { share: number }[]): {
+  top1Share: number;
+  top3Share: number;
+  top5Share: number;
+} {
+  const sum = (n: number): number => accounts.slice(0, n).reduce((s, a) => s + a.share, 0);
+  return { top1Share: accounts[0]?.share || 0, top3Share: sum(3), top5Share: sum(5) };
 }
 
 // In-memory TTL cache for MintSignals (avoids re-querying same mint across survival→final audit)
@@ -130,13 +151,13 @@ export async function getMintSignals(
     await tokenAccountIndex.initializeMintSnapshot(ctx, mint, supplyRaw, 'getMintSignals');
   }
 
-  const indexedHolders = tokenAccountIndex.getTopHolders(mint, 5);
+  const indexedHolders = tokenAccountIndex.getTopHolders(mint, TOP_HOLDER_FETCH);
   const topAccountsRaw: Array<{ address: string; amount: string }> = indexedHolders.map((h) => ({
     address: h.tokenAccount,
     amount: h.amount.toString(),
   }));
 
-  const topAccounts = topAccountsRaw.slice(0, 5).map((account) => {
+  const topAccounts = topAccountsRaw.slice(0, TOP_HOLDER_FETCH).map((account) => {
     const rawAmount = BigInt(account.amount || '0');
     return {
       address: account.address,
@@ -144,12 +165,6 @@ export async function getMintSignals(
       share: bigintRatioToNumber(rawAmount, supplyRaw),
     };
   });
-
-  const top1Share = topAccounts[0]?.share || 0;
-  const top3Share = topAccounts.slice(0, 3).reduce((sum: number, a) => sum + a.share, 0);
-  const top5Share = topAccounts
-    .slice(0, 5)
-    .reduce((sum: number, account) => sum + account.share, 0);
 
   const accountAddresses = topAccounts.flatMap((a) => {
     try {
@@ -191,7 +206,7 @@ export async function getMintSignals(
     }
   }
 
-  const ownerDetails = topAccounts.map((account, index: number) => {
+  const allOwnerDetails = topAccounts.map((account, index: number) => {
     const info = ownersInfo?.value?.[index];
     if (info && info.data && typeof info.data === 'object' && 'parsed' in info.data) {
       const parsedData = info.data as { parsed?: { info?: { owner?: string } } };
@@ -201,14 +216,18 @@ export async function getMintSignals(
     return { ...account, owner: null, ownerLookupError: 'Account info not found (possible lag)' };
   });
 
+  // The bonding curve's own token account is the largest "holder" of every fresh pump.fun mint;
+  // it is liquidity, not a wallet, so concentration is measured over real holders only.
+  const ownerDetails = dropCurveAccounts(allOwnerDetails, await derivePumpCurvePda(mint)).slice(
+    0,
+    TOP_HOLDER_COUNT
+  );
   const signals: MintSignals = {
     decimals: Number(mintInfo.decimals || 0),
     supplyRaw,
     mintAuthority: mintInfo.mintAuthority || null,
     freezeAuthority: mintInfo.freezeAuthority || null,
-    top1Share,
-    top3Share,
-    top5Share,
+    ...concentrationShares(ownerDetails),
     topAccounts: ownerDetails,
   };
   setCachedMintSignals(mint, signals);
@@ -294,7 +313,7 @@ export async function batchGetMintSignals(
     if (!tokenAccountIndex.isIndexed(mint)) {
       await tokenAccountIndex.initializeMintSnapshot(ctx, mint, supplyRaw, 'batchGetMintSignals');
     }
-    const holders = tokenAccountIndex.getTopHolders(mint, 5).map((h) => ({
+    const holders = tokenAccountIndex.getTopHolders(mint, TOP_HOLDER_FETCH).map((h) => ({
       address: h.tokenAccount,
       amount: h.amount.toString(),
     }));
@@ -309,7 +328,7 @@ export async function batchGetMintSignals(
   for (const { mint, info } of validMints) {
     const holdersRaw = largestAccountsMap.get(mint) || [];
     const supplyRaw = BigInt(info.supply || '0');
-    const holders = holdersRaw.slice(0, 5).map((h) => {
+    const holders = holdersRaw.slice(0, TOP_HOLDER_FETCH).map((h) => {
       const rawAmount = BigInt(h.amount || '0');
       allHolders.add(h.address);
       return {
@@ -359,19 +378,20 @@ export async function batchGetMintSignals(
 
   for (const { mint, info } of validMints) {
     const holders = mintToHolders.get(mint) || [];
-    const topAccounts = holders.map((h) => ({
-      ...h,
-      owner: ownerMap.get(h.address) || null,
-    }));
+    const topAccounts = dropCurveAccounts(
+      holders.map((h) => ({
+        ...h,
+        owner: ownerMap.get(h.address) || null,
+      })),
+      await derivePumpCurvePda(mint)
+    ).slice(0, TOP_HOLDER_COUNT);
 
     const signals: MintSignals = {
       decimals: Number(info.decimals || 0),
       supplyRaw: BigInt(info.supply || '0'),
       mintAuthority: info.mintAuthority || null,
       freezeAuthority: info.freezeAuthority || null,
-      top1Share: topAccounts[0]?.share || 0,
-      top3Share: topAccounts.slice(0, 3).reduce((sum, h) => sum + h.share, 0),
-      top5Share: topAccounts.reduce((sum, h) => sum + h.share, 0),
+      ...concentrationShares(topAccounts),
       topAccounts,
     };
     setCachedMintSignals(mint, signals);

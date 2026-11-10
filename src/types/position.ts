@@ -53,6 +53,8 @@ export interface Position {
   trailingArmed?: boolean;
   breakEvenStopArmed?: boolean;
   mintSignals?: MintSignals;
+  /** Holder snapshot taken at entry; `mintSignals` is overwritten by background re-audits. */
+  entryMintSignals?: MintSignals;
   securitySignals?: {
     rugCheck: RugCheckSignals | null;
     bubbleMaps: BubbleMapsSignals | null;

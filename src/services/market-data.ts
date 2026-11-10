@@ -131,6 +131,9 @@ export async function fetchDirectMarketData(
     if (!data || !Array.isArray(data) || !data[0]) return null;
     const curve = decodePumpCurve(Buffer.from(data[0], 'base64'));
     if (!curve) return null;
+    // Graduated: the curve is empty (0 real SOL => "zero liquidity"); the market moved to
+    // PumpSwap, so let the Jupiter fallback price it instead of reporting a dead curve.
+    if (curve.isCompleted) return null;
 
     const solPrice = await trading.estimateSolUsdValue(ctx, 1000000000n);
     const virtualSolReserves = Number(curve.virtualSolReserves) / 1e9;
@@ -366,8 +369,16 @@ type PriceMap = Record<string, { usdPrice: number; [key: string]: unknown }>;
  * price fresh pump mints, so asking is pure 429 fuel — they're skipped until the curve fills).
  * Pure and exported so the rule that governs scan-side Jupiter volume is unit-testable.
  */
-export function selectScanJupiterMints(ctx: Context, mints: string[], prices: PriceMap): string[] {
-  return mints.filter((m) => (!prices[m] || !(prices[m].usdPrice > 0)) && !isPumpMint(ctx, m));
+export function selectScanJupiterMints(
+  ctx: Context,
+  mints: string[],
+  prices: PriceMap,
+  /** Pump mints whose curve completed: Jupiter can price those (they trade on PumpSwap now). */
+  graduated: ReadonlySet<string> = new Set()
+): string[] {
+  return mints.filter(
+    (m) => (!prices[m] || !(prices[m].usdPrice > 0)) && (!isPumpMint(ctx, m) || graduated.has(m))
+  );
 }
 
 /** Merges on-chain curve results into `prices` (price wins over a zero from Jupiter). Returns the
@@ -442,6 +453,14 @@ export async function fetchPricesBestEffort(
     // getMultipleAccounts call (LOW priority) instead of N individual getAccountInfo calls,
     // preventing RPC burst 429s during scan.
     const batchResult = await batchFetchDirectMarketData(ctx, uniqueMints, opts.signal);
+    // A completed curve reads as price-with-zero-liquidity; drop it and route it to Jupiter.
+    const graduated = new Set<string>();
+    for (const [m, d] of Object.entries(batchResult)) {
+      if (d.isCompleted) {
+        graduated.add(m);
+        delete batchResult[m];
+      }
+    }
     const batchAsList = Object.entries(batchResult).map(([m, d]) => ({
       status: 'fulfilled' as const,
       value: { [m]: d },
@@ -460,7 +479,7 @@ export async function fetchPricesBestEffort(
         prices[mint] = { ...prices[mint], launchpad: 'pump.fun' };
       }
     }
-    const jupiterMints = selectScanJupiterMints(ctx, uniqueMints, prices);
+    const jupiterMints = selectScanJupiterMints(ctx, uniqueMints, prices, graduated);
     fallbackCount = jupiterMints.length;
     if (jupiterMints.length > 0) {
       apiResult = await fetchPrices(ctx, jupiterMints, key);
