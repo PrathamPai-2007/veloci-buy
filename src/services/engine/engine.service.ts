@@ -41,6 +41,7 @@ export { finiteNumber as finiteNumberHelper } from './scoring.js';
 
 const SURVIVAL_MOMENTUM_PASS_BAND_PCT = 2;
 const MARKET_CAP_PASS_BAND_PCT = 4;
+const ZERO_BUYS_YOUNG_SECONDS = 120;
 
 import { applyMlGate } from './evaluators/ml-gate-stage.js';
 
@@ -311,7 +312,13 @@ export async function evaluateCandidate(
   // Zero buys = literally dead token; configured minBuys5m floor is evaluated in heavy audit
   if (!reducedHistoricalSnapshot && buys5m === 0) {
     notes.push(diagContext);
-    addBlocker('Zero 5m buys.', 'zero-buys', isUnbornMint);
+    // A mint under two minutes old (or of unknown age, as WS discoveries are) may simply not have
+    // traded yet; recheck it rather than blacklisting it before the first buyers arrive.
+    addBlocker(
+      'Zero 5m buys.',
+      'zero-buys',
+      isUnbornMint || ageSeconds == null || ageSeconds < ZERO_BUYS_YOUNG_SECONDS
+    );
   }
 
   if (!ctx.config.allowVerifiedTokens && token.isVerified) {

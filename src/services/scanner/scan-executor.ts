@@ -2,8 +2,10 @@ import { runBoundedPool, PRIORITY, derivePumpCurvePda } from '#core/utils.js';
 import { appService } from '../services.js';
 import { portfolioService } from '../trading/portfolio.service.js';
 import { Context, RecheckItem, TokenMetadata, EvaluationResult, SwapOrder } from '#types/index.js';
-import { localMarketState } from '../market-state/index.js';
+import { localMarketState, marketDataProvider } from '../market-state/index.js';
+import { watchMint } from '../market-state/pump-trade-ingest.js';
 import { registerPumpMintPda } from '../../core/bot-internals/geyser-coordinator.js';
+import { buildLocalEvalInputs } from './stages/local-inputs.js';
 import {
   WorkItem,
   getDueCandidateRechecks,
@@ -49,6 +51,28 @@ export async function scanForCandidates(
       const isPump = t.launchpad === 'pump.fun' || t.id.toLowerCase().endsWith('pump');
       if (isPump) {
         registerPumpMintPda(ctx, t.id);
+        // Start collecting this mint's trades from the log stream (free) right away.
+        watchMint(t.id);
+      }
+      // Jupiter delivered richer metadata (buys, holders, socials) for a mint the WS path queued
+      // anonymously: merge it into the pending entry instead of ignoring the mint.
+      const pending = state.pendingCandidateRechecks.get(t.id);
+      if (
+        pending?.tokenSnapshot &&
+        (t.stats5m || t.holderCount !== undefined || t.symbol !== '?')
+      ) {
+        const prev = pending.tokenSnapshot;
+        const { priceHistory: _ph, tapeHistory: _th, tapeAtStart: _ta, ...fresh } = t;
+        store.upsertRecheckEntry({
+          ...pending,
+          tokenSnapshot: {
+            ...prev,
+            ...fresh,
+            symbol: t.symbol && t.symbol !== '?' ? t.symbol : prev.symbol,
+            name: t.name && t.name !== '?' ? t.name : prev.name,
+            creator: prev.creator ?? t.creator,
+          },
+        });
       }
       if (t.usdPrice !== undefined) {
         store.updateMarketSnapshot(t.id, {
@@ -104,6 +128,9 @@ export async function scanForCandidates(
   ];
   const dueMints = new Set(actualDue.map((d) => d.mint));
   const missingMints = allMints.filter((m) => {
+    // A fresh price from the local trade stream needs no RPC/Jupiter round trip.
+    const local = marketDataProvider.getMarketPriceDetails(m, 15_000);
+    if (local.isFresh && (marketDataProvider.getLiquidity(m) ?? 0) > 0) return false;
     if (dueMints.has(m)) return true;
     const snap = state.marketSnapshots.get(m);
     return !snap || !(Number(snap.usdPrice) > 0) || !(Number(snap.liquidity) > 0);
@@ -302,7 +329,16 @@ export async function scanForCandidates(
         prefetchedQuotePromise = prefetchBuyQuote(ctx, token.id);
       }
 
-      const enrichedPriceHistory = item.recheckEntry?.tokenSnapshot?.priceHistory ?? [];
+      // Price history, trade tape and the high-water mark come from local state (fed by the
+      // pump.fun log stream), so the momentum scoring and anti-top/dump guards actually run.
+      const local = buildLocalEvalInputs(token, item.recheckEntry);
+      item.token = local.token;
+      if (item.recheckEntry && local.highestSeenPriceUsd) {
+        item.recheckEntry = {
+          ...item.recheckEntry,
+          highestSeenPriceUsd: local.highestSeenPriceUsd,
+        };
+      }
       const liquidityAtStart = item.recheckEntry?.tokenSnapshot?.liquidity;
 
       const auditStart = Date.now();
@@ -310,13 +346,13 @@ export async function scanForCandidates(
       try {
         evaluation = await appService.evaluateCandidate(
           ctx,
-          token,
-          item.recheckEntry?.highestSeenPriceUsd,
-          enrichedPriceHistory,
+          local.token,
+          local.highestSeenPriceUsd,
+          local.priceHistory,
           item.recheckEntry?.basePriceUsd,
           liquidityAtStart,
-          item.recheckEntry?.tokenSnapshot?.tapeAtStart || null,
-          item.recheckEntry?.tokenSnapshot?.tapeHistory || [],
+          local.tapeAtStart,
+          local.tapeHistory,
           depth,
           priority,
           batchedSignalsMap.get(token.id)

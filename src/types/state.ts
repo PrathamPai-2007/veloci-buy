@@ -18,6 +18,10 @@ export interface RecheckItem {
   tapeAtStart?: { buys: number; sells: number };
   tapeHistory?: { buys: number; sells: number; timestamp: number }[];
   spreadHistory?: { spread: number; timestamp: number }[];
+  /** Epoch ms the mint first entered the recheck pipeline. */
+  firstSeenAt?: number;
+  /** Epoch ms the survival window began; local price/tape history is measured from here. */
+  survivalStartedAt?: number;
   isSurvivalWait?: boolean;
   isFinalAudit?: boolean;
   isWaitlist?: boolean;
