@@ -155,6 +155,14 @@ export const PUMP_FUN_CREATE_EVENT_DISCRIMINATOR = new Uint8Array([
 ]);
 
 /**
+ * Anchor event discriminator for the pump.fun `TradeEvent`, emitted on a `Program data:` log line
+ * by every bonding-curve buy and sell; see `decodePumpTradeEvent`.
+ */
+export const PUMP_FUN_TRADE_EVENT_DISCRIMINATOR = new Uint8Array([
+  0xbd, 0xdb, 0x7f, 0xd3, 0x4e, 0xe6, 0x61, 0xee,
+]);
+
+/**
  * Regex to detect Raydium AMM V4 initialization instructions in transaction logs.
  */
 export const RAYDIUM_INIT_LOG_PATTERN = /Instruction:\s+(?:Initialize2|Monitor)/i;

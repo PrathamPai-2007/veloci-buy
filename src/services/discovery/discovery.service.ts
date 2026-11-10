@@ -15,7 +15,12 @@ import {
 import { Context, TransactionData } from '#types/index.js';
 import { WebSocket } from 'ws';
 
-import { decodePumpCreateEventMint } from './providers/pump-decoder.js';
+import {
+  decodePumpCreateEvent,
+  decodePumpTradeEvent,
+  type PumpCreateEvent,
+} from './providers/pump-decoder.js';
+import { ingestPumpTrade, watchMint } from '../market-state/pump-trade-ingest.js';
 import { extractInitializedMints, getMatchingProgramId } from './providers/helius-subscriber.js';
 
 /**
@@ -54,6 +59,22 @@ export class DiscoveryService {
   private reconnectAttempts: Map<string, number> = new Map();
 
   public websocketReady = false;
+
+  /** name/symbol/creator from recent CreateEvents, so WS-discovered mints aren't anonymous. */
+  private readonly createMeta = new Map<string, PumpCreateEvent>();
+  private static readonly CREATE_META_MAX = 2000;
+
+  private rememberCreate(created: PumpCreateEvent): void {
+    if (this.createMeta.size >= DiscoveryService.CREATE_META_MAX) {
+      const oldest = this.createMeta.keys().next().value;
+      if (oldest !== undefined) this.createMeta.delete(oldest);
+    }
+    this.createMeta.set(created.mint, created);
+  }
+
+  public getCreateMeta(mint: string): PumpCreateEvent | undefined {
+    return this.createMeta.get(mint);
+  }
 
   /**
    * Initializes the discovery service and starts log subscriptions.
@@ -354,24 +375,33 @@ export class DiscoveryService {
     if (programId === PUMP_FUN_PROGRAM_ID) {
       for (const line of info.logs) {
         if (PUMP_FUN_CREATE_LOG_PATTERN.test(line)) match = true;
+        // Every curve buy/sell emits a TradeEvent: feed the local tape/price for watched mints.
+        // No `break` below skips these: a create tx can also carry the dev's first buy.
+        const trade = decodePumpTradeEvent(line);
+        if (trade) {
+          ingestPumpTrade(ctx, trade);
+          continue;
+        }
+        if (extractedMint) continue;
         // Redeployed program: mint rides in the borsh CreateEvent on a `Program data:` line.
-        const eventMint = decodePumpCreateEventMint(line);
-        if (eventMint) {
-          extractedMint = eventMint;
-          break;
+        const created = decodePumpCreateEvent(line);
+        if (created) {
+          extractedMint = created.mint;
+          this.rememberCreate(created);
+          watchMint(created.mint);
+          continue;
         }
         // Legacy formats (older program / other launchers): human-readable or JSON mint line.
         const mintMatch = line.match(PUMP_FUN_MINT_LOG_PATTERN);
         if (mintMatch && mintMatch[1]) {
           extractedMint = mintMatch[1];
-          break;
+          watchMint(extractedMint);
+          continue;
         }
-        if (!extractedMint) {
-          const jsonMatch = line.match(PUMP_FUN_MINT_JSON_PATTERN);
-          if (jsonMatch?.[1]) {
-            extractedMint = jsonMatch[1];
-            break;
-          }
+        const jsonMatch = line.match(PUMP_FUN_MINT_JSON_PATTERN);
+        if (jsonMatch?.[1]) {
+          extractedMint = jsonMatch[1];
+          watchMint(extractedMint);
         }
       }
     } else if (programId === RAYDIUM_AMM_V4_PROGRAM_ID) {

@@ -23,6 +23,16 @@ export interface SolPriceDetails {
 let _solPriceCache = { price: 0, fetchedAt: 0 };
 let _solPriceInflight: Promise<SolPriceDetails> | null = null;
 
+/** @testOnly */
+export function _setSolPriceCacheForTest(price: number): void {
+  _solPriceCache = { price, fetchedAt: Date.now() };
+}
+
+/** Last known SOL/USD without any I/O (0 when never fetched); for sync hot paths like log ingestion. */
+export function getCachedSolUsdPrice(): { price: number; ageMs: number } {
+  return { price: _solPriceCache.price, ageMs: Date.now() - _solPriceCache.fetchedAt };
+}
+
 export async function estimateSolUsdPriceDetails(
   ctx: Context,
   apiKey: string | null = null

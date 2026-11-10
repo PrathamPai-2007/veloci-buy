@@ -428,11 +428,13 @@ export class VelociBuyBot {
                 });
               }
             }
+            const meta = discovery.discoveryService.getCreateMeta(mint);
             return {
               id: mint,
-              symbol: '?',
-              name: '?',
+              symbol: meta?.symbol || '?',
+              name: meta?.name || '?',
               launchpad: lp,
+              ...(meta?.creator ? { creator: meta.creator } : {}),
             } as TokenMetadata;
           });
         }

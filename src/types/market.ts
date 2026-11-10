@@ -12,6 +12,8 @@ export interface TokenMetadata {
   isVerified?: boolean;
   fdvUsd?: number;
   marketCapUsd?: number;
+  /** Launching wallet, from the pump.fun CreateEvent (WS discovery only). */
+  creator?: string;
   /** Set when the candidate came from the Jupiter top-traded ("trending") feed. */
   isTrending?: boolean;
   priceUsd?: number;
