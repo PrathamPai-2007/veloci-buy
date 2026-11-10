@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { scannerService } from '../src/services/scanner/scanner.service.js';
 import * as bot from '../src/index.js';
-import { appService } from '../src/services/services.js';
+import { scanDeps } from '../src/services/scanner/scan-executor.js';
 import { portfolioService } from '../src/services/trading/portfolio.service.js';
 import { TokenMetadata } from '../src/types/index.js';
 
@@ -81,7 +81,7 @@ test('survival rechecks evaluate against a freshly fetched price, not the stale 
   // Case 1: price rose +10% during the survival window — evaluation must see 1.1, not 1.0.
   let evaluatedPrice: number | undefined;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({
         [mint]: { usdPrice: 1.1, liquidity: 1200, launchpad: 'pump.fun' },
@@ -110,7 +110,7 @@ test('survival rechecks evaluate against a freshly fetched price, not the stale 
   });
   evaluatedPrice = undefined;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({
         [mint]: { usdPrice: 1, liquidity: 1000, launchpad: 'pump.fun' },
@@ -134,7 +134,7 @@ test('scan short-circuits the buy pipeline once when the drawdown breaker is tri
 
   let evaluateCalls = 0;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [token],
@@ -232,7 +232,7 @@ test('bot skips borderline requeues entirely when borderline rechecks are disabl
   } as TokenMetadata;
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [token],
@@ -264,7 +264,7 @@ test('bot rejects hard blockers even when another reason is recheck eligible', a
   } as TokenMetadata;
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [token],
@@ -308,7 +308,7 @@ test('bot cancels pullback rechecks when price deterioration exceeds the configu
     usdPrice: 80,
   } as TokenMetadata;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [token],
@@ -350,7 +350,7 @@ test('bot counts reserved buy slots against the max open position limit', async 
 
   let buyAttempts = 0;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => tokens,
@@ -392,7 +392,7 @@ test('bot records scan backpressure successes and transient failures', async () 
   ctx.recordScanBackpressureEvent = (err) => events.push(Boolean(err));
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [token],
@@ -409,7 +409,7 @@ test('bot records scan backpressure successes and transient failures', async () 
 
   events.length = 0;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [token],
@@ -448,7 +448,7 @@ test('bot promotes due survival candidates to final audit after passing confirma
   });
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [],
@@ -492,7 +492,7 @@ test('bot does not promote failed survival candidates', async () => {
   });
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [],
@@ -537,7 +537,7 @@ test('bot processes due nextEligibleAt final audits and attempts buy', async () 
 
   let buyAttempts = 0;
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchPricesBestEffort: async () => ({}),
       fetchRecentLaunches: async () => [],

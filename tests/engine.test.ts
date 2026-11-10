@@ -23,10 +23,16 @@ test('engine evaluates buying-the-top only when price is near ATH after steep gr
   const noContext = await engine.evaluateCandidate(ctx, token);
   assert.equal(noContext.approved, true);
 
-  const notAtTop = await engine.evaluateCandidate(ctx, token, 250, [], 100);
+  const notAtTop = await engine.evaluateCandidate(ctx, token, {
+    highestSeenPriceUsd: 250,
+    priceAtStartOfDelay: 100,
+  });
   assert.equal(notAtTop.approved, true);
 
-  const atTop = await engine.evaluateCandidate(ctx, token, 226, [], 100);
+  const atTop = await engine.evaluateCandidate(ctx, token, {
+    highestSeenPriceUsd: 226,
+    priceAtStartOfDelay: 100,
+  });
   assert.equal(atTop.approved, false);
   assert.deepEqual(
     atTop.rejectionReasons.find((reason) => reason.code === 'buying-the-top'),
@@ -78,7 +84,7 @@ test('engine relaxes the parabolic-growth guard for trending coins only', async 
   };
 
   // Default flow: +250% exceeds maxSurvivalGrowthPct (200) -> hard parabolic reject.
-  const normal = await engine.evaluateCandidate(ctx, runner, undefined, [], 100);
+  const normal = await engine.evaluateCandidate(ctx, runner, { priceAtStartOfDelay: 100 });
   assert.equal(normal.approved, false);
   assert.ok(normal.rejectionReasons.some((r) => r.code === 'parabolic-growth'));
 
@@ -86,9 +92,7 @@ test('engine relaxes the parabolic-growth guard for trending coins only', async 
   const trending = await engine.evaluateCandidate(
     ctx,
     { ...runner, isTrending: true },
-    undefined,
-    [],
-    100
+    { priceAtStartOfDelay: 100 }
   );
   assert.equal(trending.approved, true);
   assert.ok(!trending.rejectionReasons.some((r) => r.code === 'parabolic-growth'));
@@ -105,6 +109,7 @@ test('engine GMI adjusts aggression correctly', async () => {
     maxAuditTopHoldersPct: 100,
     maxCandidateAgeMinutes: 60,
     borderlineThresholdBufferRatio: 0.2,
+    liquidityCollapseThresholdUsd: 0,
   });
   const state = createState({ launchHistory: [], retiredMints: new Map() });
   const ctx = { config, state } as unknown as Context;
@@ -399,17 +404,7 @@ test('engine rejects candidates when fdv-to-liquidity exceeds the configured thr
       fetchRugCheckWalletSignals: async () => [],
     },
     async () => {
-      const evaluation = await engine.evaluateCandidate(
-        ctx,
-        token,
-        undefined,
-        [],
-        undefined,
-        undefined,
-        undefined,
-        [],
-        'full'
-      );
+      const evaluation = await engine.evaluateCandidate(ctx, token, { depth: 'full' });
       assert.equal(evaluation.approved, false);
       assert.ok(
         evaluation.rejectionReasons.some((reason) => reason.code === 'fdv-liquidity-too-high')
@@ -474,18 +469,12 @@ test('engine flags sell pressure when rolling buy counts decrease', async () => 
     firstPool: { createdAt: new Date(Date.now() - 60_000).toISOString() },
   };
 
-  const evaluation = await engine.evaluateCandidate(
-    ctx,
-    token,
-    undefined,
-    [],
-    undefined,
-    undefined,
-    {
+  const evaluation = await engine.evaluateCandidate(ctx, token, {
+    tapeAtStart: {
       buys: 100,
       sells: 1,
-    }
-  );
+    },
+  });
 
   assert.equal(evaluation.approved, false);
   assert.ok(evaluation.rejectionReasons.some((reason) => reason.code === 'high-sell-pressure'));
@@ -516,7 +505,10 @@ test('engine sanitizes historical price points before volatility and momentum fi
     { price: 1.18, timestamp: now - 1_000 },
   ];
 
-  const evaluation = await engine.evaluateCandidate(ctx, token, undefined, priceHistory, 1);
+  const evaluation = await engine.evaluateCandidate(ctx, token, {
+    priceHistory,
+    priceAtStartOfDelay: 1,
+  });
 
   assert.equal(Number.isFinite(evaluation.volatilityScaler), true);
   assert.ok(evaluation.volatilityScaler > 0);
@@ -599,17 +591,7 @@ test('engine full audit reports downstream blockers even after mint blockers', a
       fetchRugCheckWalletSignals: async () => ['owner-a'],
     },
     async () => {
-      const evaluation = await engine.evaluateCandidate(
-        ctx,
-        token,
-        undefined,
-        [],
-        undefined,
-        undefined,
-        undefined,
-        [],
-        'full'
-      );
+      const evaluation = await engine.evaluateCandidate(ctx, token, { depth: 'full' });
       const codes = evaluation.rejectionReasons.map((reason) => reason.code);
 
       assert.equal(evaluation.approved, false);
@@ -660,17 +642,7 @@ test('engine blocks high top5 concentration unconditionally, passes distributed 
         fetchRugCheckWalletSignals: async () => [],
       },
       async () => {
-        const evaluation = await engine.evaluateCandidate(
-          ctx,
-          baseToken,
-          undefined,
-          [],
-          undefined,
-          undefined,
-          undefined,
-          [],
-          'full'
-        );
+        const evaluation = await engine.evaluateCandidate(ctx, baseToken, { depth: 'full' });
         return evaluation.rejectionReasons.map((reason) => reason.code);
       }
     );
@@ -761,4 +733,18 @@ test('engine rejects candidate with zero buys/sells (zero volume)', async () => 
   assert.equal(result.approved, false);
   // buys5m=0 is caught as 'zero-buys' in light audit; minBuys5m floor runs in heavy audit
   assert.ok(result.blockers.some((b) => b.includes('5m buys')));
+});
+
+test('engine will not buy below the liquidity-exit floor', async () => {
+  const ctx = createCtx({ minLiquidityUsd: 300, liquidityCollapseThresholdUsd: 750 });
+  const token: TokenMetadata = {
+    id: 'ThinMint',
+    symbol: 'THIN',
+    name: 'Thin',
+    decimals: 6,
+    usdPrice: 1,
+    liquidity: 428,
+  } as TokenMetadata;
+  const res = await engine.evaluateCandidate(ctx, token);
+  assert.ok(res.rejectionReasons.some((r) => r.code === 'low-liquidity'));
 });

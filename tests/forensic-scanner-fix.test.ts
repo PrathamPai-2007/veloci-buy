@@ -319,7 +319,7 @@ describe('Forensic Scanner & Audit Stress Verification Suite', () => {
 
     localMarketState.seedInitialPumpFunSnapshot(token.id);
 
-    const result = await evaluateCandidate(mockCtx, token, null, [], null, null, null, [], 'full');
+    const result = await evaluateCandidate(mockCtx, token, { depth: 'full' });
 
     assert.equal(result.approved, false);
     assert.ok(

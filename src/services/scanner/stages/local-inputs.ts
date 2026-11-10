@@ -9,6 +9,9 @@ const MAX_TAPE_POINTS = 24;
 
 export interface LocalEvalInputs {
   token: TokenMetadata;
+  /** True when liquidity was replaced by the local reading (curve real reserves), which is not
+   *  comparable with the Jupiter-sourced liquidity the entry started with. */
+  liquidityFromLocal: boolean;
   highestSeenPriceUsd: number | null;
   priceHistory: { price: number; timestamp: number }[];
   tapeAtStart: { buys: number; sells: number } | null;
@@ -33,9 +36,13 @@ export function buildLocalEvalInputs(
   const details = marketDataProvider.getMarketPriceDetails(mint, LOCAL_FRESH_MS);
   const snap = marketDataProvider.getSnapshot(mint);
   const enriched: TokenMetadata = { ...token };
+  let liquidityFromLocal = false;
   if (details.isFresh && snap && details.priceUsd != null) {
     enriched.usdPrice = details.priceUsd;
-    if (snap.liquidityUsd > 0) enriched.liquidity = snap.liquidityUsd;
+    if (snap.liquidityUsd > 0) {
+      enriched.liquidity = snap.liquidityUsd;
+      liquidityFromLocal = true;
+    }
     if (!(Number(enriched.fdv) > 0) && snap.fdvUsd > 0) enriched.fdv = snap.fdvUsd;
   }
 
@@ -81,6 +88,7 @@ export function buildLocalEvalInputs(
 
   return {
     token: enriched,
+    liquidityFromLocal,
     highestSeenPriceUsd: high > 0 ? high : null,
     priceHistory: history,
     tapeAtStart,

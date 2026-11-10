@@ -7,7 +7,7 @@ import {
   withPatchedMembers,
 } from './_test_helpers.js';
 import { scannerService } from '../src/services/scanner/scanner.service.js';
-import { appService } from '../src/services/services.js';
+import { scanDeps } from '../src/services/scanner/scan-executor.js';
 import { portfolioService } from '../src/services/trading/portfolio.service.js';
 import { auditService } from '../src/services/audit/audit.service.js';
 import { Context, TokenMetadata, Position, EvaluationResult } from '../src/types/index.js';
@@ -123,7 +123,7 @@ test('snapshot scanForCandidates: full pipeline with approved + rejected + reche
   const evaluatedTokens: string[] = [];
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchRecentLaunches: async () => [approvedToken, rejectedToken, recheckToken],
       fetchPricesBestEffort: async () => ({}),
@@ -195,7 +195,7 @@ test('snapshot scanForCandidates: empty discovery produces zero side effects', a
   const { ctx, state, cleanup } = createCannedScanContext();
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchRecentLaunches: async () => [],
       evaluateCandidate: async () => {
@@ -259,7 +259,7 @@ test('snapshot scanForCandidates: all hard-rejected tokens are tracked', async (
   };
 
   await withPatchedMembers(
-    appService,
+    scanDeps,
     {
       fetchRecentLaunches: async () => [hardRejectedToken],
       evaluateCandidate: async () => hardRejectResult,

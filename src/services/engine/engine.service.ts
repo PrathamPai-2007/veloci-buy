@@ -41,41 +41,51 @@ export {
 const SURVIVAL_MOMENTUM_PASS_BAND_PCT = 2;
 const MARKET_CAP_PASS_BAND_PCT = 4;
 const ZERO_BUYS_YOUNG_SECONDS = 120;
+const LIQUIDITY_EXIT_MARGIN = 1.25;
 
 import { applyMlGate } from './evaluators/ml-gate-stage.js';
+
+/** Everything observed about a token while it waited; all optional. */
+export interface EvaluateInputs {
+  /** Highest price observed for this token. */
+  highestSeenPriceUsd?: number | null;
+  priceHistory?: unknown[];
+  /** Price / liquidity when the survival delay started. */
+  priceAtStartOfDelay?: number | null;
+  liquidityAtStartOfDelay?: number | null;
+  /** Buy/sell counts at the start of the delay, and sampled since. */
+  tapeAtStart?: { buys: number; sells: number } | null;
+  tapeHistory?: unknown[];
+  /** 'cheap' stops after the local gates; 'full' runs the deep audit. */
+  depth?: 'cheap' | 'full';
+  /** RPC priority for the deep audit. */
+  priority?: number;
+  /** Mint signals already fetched in a batch. */
+  preFetchedSignals?: MintSignals;
+}
 
 /**
  * Performs a multi-stage evaluation of a token candidate.
  * Applies strategy filters including momentum, liquidity, volume, and audits.
  *
- * @param ctx - The application context.
- * @param token - The token metadata to evaluate.
- * @param highestSeenPriceUsd - The highest price observed for this token.
- * @param priceHistory - Historical price data.
- * @param priceAtStartOfDelay - Price when the evaluation delay started.
- * @param liquidityAtStartOfDelay - Liquidity when the evaluation delay started.
- * @param tapeAtStart - Transaction tape (buys/sells) at the start of delay.
- * @param tapeHistory - Historical transaction tape data.
- * @param depth - Depth of evaluation ('cheap' skips heavy audits).
- * @param priority - RPC priority level.
- * @param preFetchedSignals - Optional pre-fetched mint signals to optimize performance.
- * @param opts - Additional options (e.g. lightAudit skip flag).
  * @returns An evaluation result with approval status and reasons.
  */
 export async function evaluateCandidate(
   ctx: Context,
   token: TokenMetadata,
-  highestSeenPriceUsd: number | null = null,
-  priceHistory: unknown[] = [],
-  priceAtStartOfDelay: number | null = null,
-  liquidityAtStartOfDelay: number | null = null,
-  tapeAtStart: { buys: number; sells: number } | null = null,
-  tapeHistory: unknown[] = [],
-  depth = 'cheap',
-  priority: number | undefined = undefined,
-  preFetchedSignals?: MintSignals,
-  opts?: { lightAudit?: boolean }
+  inputs: EvaluateInputs = {}
 ): Promise<EvaluationResult> {
+  const {
+    highestSeenPriceUsd = null,
+    priceHistory = [],
+    priceAtStartOfDelay = null,
+    liquidityAtStartOfDelay = null,
+    tapeAtStart = null,
+    tapeHistory = [],
+    depth = 'cheap',
+    priority,
+    preFetchedSignals,
+  } = inputs;
   ctx.store?.incrementMetric('candidateDiscoveries', 1);
   const blockers: string[] = [];
   const rejectionReasons: { code: string; recheckEligible: boolean }[] = [];
@@ -311,14 +321,18 @@ export async function evaluateCandidate(
     addBlocker('No price.', 'missing-price', isUnbornMint || isNonPump);
   }
 
-  if (!Number.isFinite(liquidity) || liquidity < thresholds.minLiquidityUsd) {
+  // Never buy a position the monitor would liquidity-exit on its first tick: the entry floor must
+  // sit above the collapse threshold (with margin, since thin curves move between the two reads).
+  const minLiquidityUsd = Math.max(
+    thresholds.minLiquidityUsd,
+    ctx.config.liquidityCollapseThresholdUsd * LIQUIDITY_EXIT_MARGIN
+  );
+  if (!Number.isFinite(liquidity) || liquidity < minLiquidityUsd) {
     notes.push(diagContext);
     addBlocker(
       `Low liquidity ${formatUsd(liquidity)}.`,
       'low-liquidity',
-      isUnbornMint ||
-        isNonPump ||
-        isSlightlyBelowThreshold(ctx, liquidity, thresholds.minLiquidityUsd)
+      isUnbornMint || isNonPump || isSlightlyBelowThreshold(ctx, liquidity, minLiquidityUsd)
     );
   }
 
@@ -486,7 +500,7 @@ export async function evaluateCandidate(
 
   // GATING: If candidate is rejected by cheap local checks, or if depth is 'cheap', return immediately.
   // Deep audit (including holder concentration & external signals) ONLY runs for candidates passing cheap gates.
-  if (blockers.length > 0 || depth === 'cheap' || opts?.lightAudit) {
+  if (blockers.length > 0) {
     if (blockers.length === 0) {
       ctx.store?.incrementMetric('cheapGatePasses', 1);
     }

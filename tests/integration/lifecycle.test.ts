@@ -9,7 +9,7 @@ import { TestConfigBuilder } from '../factories/config.js';
 import { createTestToken } from '../factories/token.js';
 import { StateStore } from '../../src/core/store.js';
 import { SQLiteDb } from '../../src/core/db.js';
-import { appService } from '../../src/services/services.js';
+import { buyCandidate } from '../../src/services/buy.js';
 import { evaluateSinglePosition } from '../../src/services/monitor/monitor.service.js';
 import { Context, EvaluationResult } from '../../src/types/index.js';
 import { localMarketState } from '../../src/services/market-state/local-market-state.js';
@@ -126,7 +126,7 @@ test('Integration Lifecycle: paper buy -> position tracking -> take-profit exit 
     });
 
     // Step 1: Execute Paper Buy
-    const pos = await appService.buyCandidate(env.ctx, evaluation);
+    const pos = await buyCandidate(env.ctx, evaluation);
 
     assert.ok(pos, 'Buy operation should produce a valid Position');
     assert.equal(pos.mint, token.id);

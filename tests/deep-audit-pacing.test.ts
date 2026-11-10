@@ -34,17 +34,7 @@ describe('Deep Audit Gate & Rate Limiting Pacing', () => {
       launchpad: 'pump.fun',
     };
 
-    const evalResult = await evaluateCandidate(
-      mockCtx,
-      cheapRejectToken,
-      null,
-      [],
-      null,
-      null,
-      null,
-      [],
-      'cheap'
-    );
+    const evalResult = await evaluateCandidate(mockCtx, cheapRejectToken, { depth: 'cheap' });
 
     assert.equal(evalResult.approved, false);
     assert.equal(store.state.metrics.candidateDiscoveries, 1);

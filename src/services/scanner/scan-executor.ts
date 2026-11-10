@@ -1,5 +1,7 @@
 import { runBoundedPool, PRIORITY, derivePumpCurvePda, isPumpMintAddress } from '#core/utils.js';
-import { appService } from '../services.js';
+import { fetchRecentLaunches, fetchPricesBestEffort } from '../market-data.js';
+import { buyCandidate } from '../buy.js';
+import { evaluateCandidate } from '../engine/engine.service.js';
 import { portfolioService } from '../trading/portfolio.service.js';
 import { Context, RecheckItem, TokenMetadata, EvaluationResult, SwapOrder } from '#types/index.js';
 import { localMarketState, marketDataProvider } from '../market-state/index.js';
@@ -24,6 +26,14 @@ import {
   logScanSummary,
 } from './stages/candidate-evaluator.js';
 
+/** Collaborators of the scan loop, in one object so tests can swap them out. */
+export const scanDeps = {
+  fetchRecentLaunches,
+  fetchPricesBestEffort,
+  evaluateCandidate,
+  buyCandidate,
+};
+
 export async function scanForCandidates(
   ctx: Context,
   discoveryItems?: TokenMetadata[],
@@ -36,7 +46,7 @@ export async function scanForCandidates(
   let actualDiscovery = discoveryItems;
   if (!actualDiscovery) {
     try {
-      actualDiscovery = await appService.fetchRecentLaunches(ctx);
+      actualDiscovery = await scanDeps.fetchRecentLaunches(ctx);
     } catch (e) {
       ctx.logger(
         `Failed to fetch recent launches: ${e instanceof Error ? e.message : String(e)}`,
@@ -140,7 +150,7 @@ export async function scanForCandidates(
     const started = Date.now();
     try {
       const controller = new AbortController();
-      const fetchPromise = appService.fetchPricesBestEffort(
+      const fetchPromise = scanDeps.fetchPricesBestEffort(
         ctx,
         missingMints,
         'scan pre-fetch',
@@ -339,24 +349,26 @@ export async function scanForCandidates(
           highestSeenPriceUsd: local.highestSeenPriceUsd,
         };
       }
-      const liquidityAtStart = item.recheckEntry?.tokenSnapshot?.liquidity;
+      // Skip the liquidity-drain check when the current reading is local and the start reading
+      // came from Jupiter: the two measure different things (real vs virtual reserves).
+      const liquidityAtStart = local.liquidityFromLocal
+        ? undefined
+        : item.recheckEntry?.tokenSnapshot?.liquidity;
 
       const auditStart = Date.now();
       let evaluation: EvaluationResult;
       try {
-        evaluation = await appService.evaluateCandidate(
-          ctx,
-          local.token,
-          local.highestSeenPriceUsd,
-          local.priceHistory,
-          item.recheckEntry?.basePriceUsd,
-          liquidityAtStart,
-          local.tapeAtStart,
-          local.tapeHistory,
+        evaluation = await scanDeps.evaluateCandidate(ctx, local.token, {
+          highestSeenPriceUsd: local.highestSeenPriceUsd,
+          priceHistory: local.priceHistory,
+          priceAtStartOfDelay: item.recheckEntry?.basePriceUsd,
+          liquidityAtStartOfDelay: liquidityAtStart,
+          tapeAtStart: local.tapeAtStart,
+          tapeHistory: local.tapeHistory,
           depth,
           priority,
-          batchedSignalsMap.get(token.id)
-        );
+          preFetchedSignals: batchedSignalsMap.get(token.id),
+        });
       } finally {
         stageDurations[depth === 'full' ? 'heavyAuditMs' : 'lightAuditMs'].push(
           Date.now() - auditStart
@@ -392,7 +404,7 @@ export async function scanForCandidates(
         store.incrementMetric('finalAuditPassed');
         const buyStart = Date.now();
         try {
-          const pos = await appService.buyCandidate(ctx, evaluation, prefetchedQuotePromise);
+          const pos = await scanDeps.buyCandidate(ctx, evaluation, prefetchedQuotePromise);
           if (pos) {
             metrics.buys++;
             store.incrementMetric('boughtPositions');

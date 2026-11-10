@@ -3,7 +3,13 @@ import { createCtx, withMockedFetch, withPatchedMembers } from './_test_helpers.
 import { jupiterDiscoveryBreaker } from '../src/services/jupiter-circuit-breaker.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appService } from '../src/services/services.js';
+import {
+  fetchPrices,
+  fetchPricesBestEffort,
+  fetchTrendingLaunches,
+} from '../src/services/market-data.js';
+import { buyCandidate } from '../src/services/buy.js';
+import { closeAllOpenPositions, mergeLoopRequest } from '../src/services/monitor-utils.js';
 import { tradingService } from '../src/services/trading/trading.service.js';
 import * as utils from '../src/core/utils.js';
 import { SOL_MINT } from '../src/core/config.js';
@@ -47,7 +53,7 @@ test('services normalizes Jupiter price payloads with and without a data wrapper
           }),
       }) as Response,
     async () => {
-      const prices = await appService.fetchPrices(ctx, ['mint1', 'mint2']);
+      const prices = await fetchPrices(ctx, ['mint1', 'mint2']);
       assert.equal(prices['mint1']!.usdPrice, 1.23);
       assert.equal(prices['mint2']!.usdPrice, 4.56);
     }
@@ -63,7 +69,7 @@ test('services normalizes Jupiter price payloads with and without a data wrapper
           }),
       }) as Response,
     async () => {
-      const prices = await appService.fetchPrices(ctx, ['mint3']);
+      const prices = await fetchPrices(ctx, ['mint3']);
       assert.equal(prices['mint3']!.usdPrice, 7.89);
     }
   );
@@ -87,7 +93,7 @@ test('services fetchTrendingLaunches keeps only pump.fun mints and tags them isT
       } as Response;
     },
     async () => {
-      const trending = await appService.fetchTrendingLaunches(ctx);
+      const trending = await fetchTrendingLaunches(ctx);
       // Hits the top-traded endpoint for the configured interval.
       assert.ok(requestedUrl.includes('/tokens/v2/toptraded/5m'), requestedUrl);
       // Non-pump (raydium) mint is filtered out.
@@ -118,7 +124,7 @@ test('services backs off Jupiter (no per-mint fan-out) when the batch is rate-li
       throw new Error(`unexpected url ${url}`);
     },
     async () => {
-      const prices = await appService.fetchPricesBestEffort(ctx, ['mint-a', 'mint-b'], 'test');
+      const prices = await fetchPricesBestEffort(ctx, ['mint-a', 'mint-b'], 'test');
 
       // The batch 429 must NOT fan out into per-mint Jupiter retries (the amplification that
       // turns one rate-limit into a storm). Only the single batch request is attempted.
@@ -133,7 +139,7 @@ test('services backs off Jupiter (no per-mint fan-out) when the batch is rate-li
       assert.equal(jupiterDiscoveryBreaker.getState(), 'OPEN');
 
       // Within the window, further price calls short-circuit without touching the network.
-      const again = await appService.fetchPrices(ctx, ['mint-a']);
+      const again = await fetchPrices(ctx, ['mint-a']);
       assert.deepEqual(again, {});
       assert.equal(calls.length, 1);
     }
@@ -182,7 +188,7 @@ test('services price refresh runs the Jupiter batch and ONE batched curve read c
     },
     async () => {
       const started = Date.now();
-      const prices = await appService.fetchPricesBestEffort(ctx, mints, 'concurrency-test');
+      const prices = await fetchPricesBestEffort(ctx, mints, 'concurrency-test');
       const elapsed = Date.now() - started;
 
       assert.equal(prices[mintA]!.usdPrice, 1);
@@ -203,17 +209,17 @@ test('services uses the requested Jupiter API key when fetching prices', async (
       return { ok: true, text: async () => JSON.stringify({ mint1: { usdPrice: 1 } }) } as Response;
     },
     async () => {
-      await appService.fetchPrices(ctx, ['mint1'], ctx.config.jupiterPositionApiKey);
+      await fetchPrices(ctx, ['mint1'], ctx.config.jupiterPositionApiKey);
       assert.strictEqual(lastApiKey, 'position-key');
 
-      await appService.fetchPrices(ctx, ['mint1']);
+      await fetchPrices(ctx, ['mint1']);
       assert.strictEqual(lastApiKey, 'test-key');
     }
   );
 });
 
 test('services mergeLoopRequest combines flags, counts, and reasons deterministically', () => {
-  const merged = appService.mergeLoopRequest(
+  const merged = mergeLoopRequest(
     { forceDiscovery: false, skipMonitor: true, websocketSignalCount: 2, reason: 'ws' },
     { forceDiscovery: true, skipMonitor: false, websocketSignalCount: 3, reason: 'manual' }
   );
@@ -268,7 +274,7 @@ test('services paper buy and shutdown sell complete a profitable round trip', as
     },
     async () => {
       authorizeTestMint('PaperMint', 2, 2000);
-      const position = await appService.buyCandidate(ctx, {
+      const position = await buyCandidate(ctx, {
         token: {
           id: 'PaperMint',
           symbol: 'P',
@@ -284,7 +290,7 @@ test('services paper buy and shutdown sell complete a profitable round trip', as
       assert.ok(position);
       assert.equal(ctx.state.positions.has('PaperMint'), true);
 
-      await appService.closeAllOpenPositions(ctx);
+      await closeAllOpenPositions(ctx);
       assert.equal(ctx.state.positions.has('PaperMint'), false);
       assert.ok(BigInt(ctx.state.paperSolBalanceLamports) > initialSol);
     }
@@ -341,7 +347,7 @@ test('services live buy dry-run inspects balances but does not execute a swap', 
     },
     async () => {
       authorizeTestMint('5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq', 5, 2000);
-      const position = await appService.buyCandidate(ctx, {
+      const position = await buyCandidate(ctx, {
         token: {
           id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
           symbol: 'LB',
@@ -421,7 +427,7 @@ test('services live buy records bookkeeping when swap execution succeeds', async
       },
     },
     async () => {
-      const position = await appService.buyCandidate(ctx, {
+      const position = await buyCandidate(ctx, {
         token: {
           id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
           symbol: 'LB',
@@ -478,7 +484,7 @@ test('services live buy reuses prefetched quote for smart retry', async () => {
     },
     async () => {
       authorizeTestMint('5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq', 5, 2000);
-      const position = await appService.buyCandidate(
+      const position = await buyCandidate(
         ctx,
         {
           token: {
@@ -570,7 +576,7 @@ test('services live buy persists nested BigInt audit metadata without failing th
         },
         async () => {
           authorizeTestMint('5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq', 5, 2000);
-          const position = await appService.buyCandidate(ctx, {
+          const position = await buyCandidate(ctx, {
             token: {
               id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
               symbol: 'LB',
@@ -641,7 +647,7 @@ test('services live buy increments failure accounting when quoting fails', async
     },
     async () => {
       authorizeTestMint('SlippageMint', 2, 5000);
-      const position = await appService.buyCandidate(ctx, {
+      const position = await buyCandidate(ctx, {
         token: {
           id: '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq',
           symbol: 'LB',
@@ -683,7 +689,7 @@ test('services buyCandidate handles simulated slippage in paper trading', async 
       return { ok: true, text: async () => JSON.stringify({ data: prices }) } as Response;
     },
     async () => {
-      const position = await appService.buyCandidate(ctx, {
+      const position = await buyCandidate(ctx, {
         token: {
           id: 'SlippageMint',
           symbol: 'SLIP',

@@ -2,7 +2,7 @@
 import { createCtx, withPatchedMembers } from './_test_helpers.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { appService } from '../src/services/services.js';
+import { scanDeps } from '../src/services/scanner/scan-executor.js';
 import { scanForCandidates } from '../src/services/scanner/scanner.service.js';
 import { EvaluationResult, TokenMetadata } from '../src/types/index.js';
 
@@ -26,7 +26,7 @@ test('scanner re-fetches zero-price pump.fun mints through the curve fallback', 
   let fetchedMints: string[] = [];
 
   await withPatchedMembers(
-    appService as unknown as Record<string, unknown>,
+    scanDeps as unknown as Record<string, unknown>,
     {
       // Capture which mints get the best-effort (curve fallback) fetch; return real values.
       fetchPricesBestEffort: async (_ctx: unknown, mints: string[]) => {

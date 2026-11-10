@@ -49,7 +49,7 @@ test('snapshot evaluateCandidate: standard approval (pump.fun)', async (t) => {
       fetchRugCheckWalletSignals: async () => [],
     },
     async () => {
-      const result = await engine.evaluateCandidate(ctx, token, null, [], null, null, null, []);
+      const result = await engine.evaluateCandidate(ctx, token);
       t.assert.snapshot(serializeForSnapshot(result));
     }
   );
@@ -83,7 +83,7 @@ test('snapshot evaluateCandidate: low entry score rejection', async (t) => {
       fetchRugCheckWalletSignals: async () => [],
     },
     async () => {
-      const result = await engine.evaluateCandidate(ctx, token, null, [], null, null, null, []);
+      const result = await engine.evaluateCandidate(ctx, token);
       t.assert.snapshot(serializeForSnapshot(result));
     }
   );
@@ -117,16 +117,12 @@ test('snapshot evaluateCandidate: buying-the-top rejection', async (t) => {
       fetchRugCheckWalletSignals: async () => [],
     },
     async () => {
-      const result = await engine.evaluateCandidate(
-        ctx,
-        token,
-        226,
-        [],
-        100,
-        10000,
-        { buys: 50, sells: 10 },
-        []
-      );
+      const result = await engine.evaluateCandidate(ctx, token, {
+        highestSeenPriceUsd: 226,
+        priceAtStartOfDelay: 100,
+        liquidityAtStartOfDelay: 10000,
+        tapeAtStart: { buys: 50, sells: 10 },
+      });
       t.assert.snapshot(serializeForSnapshot(result));
     }
   );
@@ -164,17 +160,12 @@ test('snapshot evaluateCandidate: trending approval with relaxed thresholds', as
       fetchRugCheckWalletSignals: async () => [],
     },
     async () => {
-      const result = await engine.evaluateCandidate(
-        ctx,
-        token,
-        0.5,
-        [],
-        0.35,
-        100000,
-        null,
-        [],
-        'full'
-      );
+      const result = await engine.evaluateCandidate(ctx, token, {
+        highestSeenPriceUsd: 0.5,
+        priceAtStartOfDelay: 0.35,
+        liquidityAtStartOfDelay: 100000,
+        depth: 'full',
+      });
       t.assert.snapshot(serializeForSnapshot(result));
     }
   );

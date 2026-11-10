@@ -18,7 +18,9 @@ import { localMarketState } from '#services/market-state/index.js';
 
 import { StateStore } from './store.js';
 
-import * as services from '#services/services.js';
+import { fetchTrendingLaunches } from '#services/market-data.js';
+import { monitorPositions, closeAllOpenPositions } from '#services/monitor-utils.js';
+import { getMoodAdjustments } from '#services/monitor/monitor.service.js';
 import * as discovery from '#services/discovery/discovery.service.js';
 import * as scanner from '#services/scanner/scanner.service.js';
 import { startBlockhashPrewarmer } from '#services/trading/swap-executor.js';
@@ -330,7 +332,7 @@ export class VelociBuyBot {
     this.monitorLoopBusy = true;
     const monitorTickStartedAt = Date.now();
     try {
-      await services.monitorPositions(this.getCtx());
+      await monitorPositions(this.getCtx());
       const monitorTickCompletedAt = Date.now();
       const monitorTickDurationMs = monitorTickCompletedAt - monitorTickStartedAt;
       this.getCtx().logger(
@@ -398,7 +400,7 @@ export class VelociBuyBot {
     if (this.discoveryLoopBusy || this.shouldStop) return;
     this.discoveryLoopBusy = true;
     try {
-      const mood = services.getMoodAdjustments(this.getCtx());
+      const mood = getMoodAdjustments(this.getCtx());
       this.processCoolDowns();
 
       const isForced = trigger === true || (typeof trigger === 'object' && trigger.forceDiscovery);
@@ -461,9 +463,9 @@ export class VelociBuyBot {
     this.trendingLoopBusy = true;
     try {
       const ctx = this.getCtx();
-      const mood = services.getMoodAdjustments(ctx);
+      const mood = getMoodAdjustments(ctx);
       if (mood.isPaused) return;
-      const trending = await services.appService.fetchTrendingLaunches(ctx);
+      const trending = await fetchTrendingLaunches(ctx);
       if (trending.length > 0) {
         await this.runScanExclusive(() =>
           scanner.scanCoordinator.requestScan(ctx, trending, 'trending')
@@ -603,7 +605,7 @@ export class VelociBuyBot {
         console: true,
       });
       try {
-        await services.closeAllOpenPositions(this.getCtx());
+        await closeAllOpenPositions(this.getCtx());
       } catch (e) {
         this.getCtx().logger(
           `Shutdown exit failure: ${e instanceof Error ? e.message : String(e)}`,
