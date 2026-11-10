@@ -148,7 +148,13 @@ export async function getMintSignals(
 
   // Local-First: Initialize holder snapshot if not indexed, then read from tokenAccountIndex
   if (!tokenAccountIndex.isIndexed(mint)) {
-    await tokenAccountIndex.initializeMintSnapshot(ctx, mint, supplyRaw, 'getMintSignals');
+    await tokenAccountIndex.initializeMintSnapshot(
+      ctx,
+      mint,
+      supplyRaw,
+      'getMintSignals',
+      priority
+    );
   }
 
   const indexedHolders = tokenAccountIndex.getTopHolders(mint, TOP_HOLDER_FETCH);
@@ -311,7 +317,13 @@ export async function batchGetMintSignals(
   for (const { mint, info } of validMints) {
     const supplyRaw = BigInt(info.supply || '0');
     if (!tokenAccountIndex.isIndexed(mint)) {
-      await tokenAccountIndex.initializeMintSnapshot(ctx, mint, supplyRaw, 'batchGetMintSignals');
+      await tokenAccountIndex.initializeMintSnapshot(
+        ctx,
+        mint,
+        supplyRaw,
+        'batchGetMintSignals',
+        priority
+      );
     }
     const holders = tokenAccountIndex.getTopHolders(mint, TOP_HOLDER_FETCH).map((h) => ({
       address: h.tokenAccount,

@@ -1,5 +1,6 @@
 import { Context } from '#types/index.js';
 import { isRateLimitError } from '#core/utils/fetch.js';
+import { RateLimitError } from '#core/errors.js';
 
 /** A 429 opens the circuit at once for this long; the next call is a single probe. */
 const RATE_LIMIT_COOLDOWN_MS = 30_000;
@@ -138,7 +139,13 @@ export class JupiterCircuitBreaker {
     if (this.state === 'CLOSED' && error !== undefined && isRateLimitError(error)) {
       this.state = 'OPEN';
       this.openedAt = this.getNow();
-      this.currentCooldownMs = Math.min(this.baseCooldownMs, RATE_LIMIT_COOLDOWN_MS);
+      // A Retry-After from Jupiter says exactly how long to stay away; otherwise use the default.
+      const serverMs =
+        error instanceof RateLimitError && error.fromServer ? error.retryAfterMs : null;
+      this.currentCooldownMs =
+        serverMs !== null
+          ? Math.max(1_000, serverMs)
+          : Math.min(this.baseCooldownMs, RATE_LIMIT_COOLDOWN_MS);
       if (ctx) {
         ctx.store.incrementMetric('jupiterCircuitOpens', 1);
         ctx.logger(

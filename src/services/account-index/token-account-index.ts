@@ -23,7 +23,9 @@ export class TokenAccountIndexService extends EventEmitter {
   private readonly mintStates = new Map<string, MintStateRecord>();
 
   // Pacing & Rate Limiting Queue (Max 1 in-flight, spaced >= 300ms apart)
-  private readonly requestQueue: Array<() => Promise<void>> = [];
+  // Priority-ordered (lower number first, FIFO within a priority): a final audit about to buy
+  // must not wait behind scan-side holder lookups.
+  private readonly requestQueue: Array<{ priority: number; run: () => Promise<void> }> = [];
   private isProcessingQueue = false;
   private lastRequestStartTs = 0;
   private activeInFlightCount = 0;
@@ -73,7 +75,8 @@ export class TokenAccountIndexService extends EventEmitter {
     ctx: Context,
     mint: string,
     totalSupply = 1_000_000_000_000_000n,
-    caller = 'unknown'
+    caller = 'unknown',
+    priority: number = PRIORITY.LOW
   ): Promise<void> {
     if (this.mintTrackers.has(mint) && (this.mintTrackers.get(mint)?.holderCount ?? 0) > 0) return;
 
@@ -142,7 +145,7 @@ export class TokenAccountIndexService extends EventEmitter {
               mint as any,
               { commitment: 'confirmed' },
             ],
-            { priority: PRIORITY.LOW, timeoutMs: 5000, maxAttempts: 1 }
+            { priority, timeoutMs: 5000, maxAttempts: 1 }
           )) as unknown as { value: Array<{ address: string; amount: string }> };
 
           if (resp?.value && Array.isArray(resp.value)) {
@@ -200,7 +203,10 @@ export class TokenAccountIndexService extends EventEmitter {
         }
       };
 
-      this.requestQueue.push(task);
+      const entry = { priority, run: task };
+      const at = this.requestQueue.findIndex((q) => q.priority > priority);
+      if (at === -1) this.requestQueue.push(entry);
+      else this.requestQueue.splice(at, 0, entry);
       void this.processQueue();
     });
 
@@ -213,9 +219,9 @@ export class TokenAccountIndexService extends EventEmitter {
     this.isProcessingQueue = true;
 
     while (this.requestQueue.length > 0) {
-      const task = this.requestQueue.shift();
-      if (task) {
-        await task();
+      const next = this.requestQueue.shift();
+      if (next) {
+        await next.run();
       }
     }
 

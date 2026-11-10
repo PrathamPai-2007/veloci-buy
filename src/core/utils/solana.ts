@@ -156,7 +156,7 @@ export async function withHeavySlot<T>(fn: () => Promise<T>, signal?: AbortSigna
 const rpcBuckets = new Map<number, TokenBucket>();
 const sendTxBuckets = new Map<number, TokenBucket>();
 
-function getRpcBucket(index: number): TokenBucket {
+export function getRpcBucket(index: number): TokenBucket {
   let bucket = rpcBuckets.get(index);
   if (!bucket) {
     bucket = makePriorityTokenBucket(perIndexRpcLimits?.[index] ?? RPC_MAX_REQUESTS_PER_SEC);
@@ -172,6 +172,27 @@ function getSendTxBucket(index: number): TokenBucket {
     sendTxBuckets.set(index, bucket);
   }
   return bucket;
+}
+
+/** A free-tier endpoint backed up by more than this lets LOW calls spill to an idle premium one. */
+const LOW_SPILLOVER_WAIT_MS = 250;
+
+/**
+ * Picks the endpoint whose bucket would grant this request soonest, rotating through ties so
+ * idle endpoints still share load. Plain round-robin queued calls on a busy or penalized
+ * endpoint while another one had free tokens.
+ */
+export function pickLeastLoaded<T extends { index: number }>(
+  candidates: T[],
+  priority: PRIORITY,
+  rotation: number
+): T | undefined {
+  if (candidates.length <= 1) return candidates[0];
+  const waits = candidates.map((c) => getRpcBucket(c.index).estimateWaitMs(priority));
+  const best = Math.min(...waits);
+  // Treat waits within 50ms as a tie so a hair of difference doesn't pin all traffic to one node.
+  const tied = candidates.filter((_, i) => waits[i]! <= best + 50);
+  return tied[rotation % tied.length];
 }
 
 /** Penalty applied to an endpoint's bucket after the provider answers 429. */
@@ -345,11 +366,26 @@ async function rpcCallUncached<TMethod extends keyof SolanaRpcApi>(
         const preferredTier: 'premium' | 'free' | null =
           priority === PRIORITY.LOW ? 'free' : 'premium';
         const tiered = candidates.filter(({ index }) => tiers[index] === preferredTier);
-        if (tiered.length > 0) candidates = tiered;
+        if (tiered.length > 0) {
+          const all = candidates;
+          candidates = tiered;
+          // Scan traffic normally stays on the free tier, but when that tier is backed up it may
+          // use a premium endpoint that has nobody waiting (zero wait counts every queued call,
+          // so a premium bucket with queued exits never qualifies).
+          if (priority === PRIORITY.LOW) {
+            const tieredWait = Math.min(
+              ...tiered.map((c) => getRpcBucket(c.index).estimateWaitMs(priority))
+            );
+            const idle = all.filter(
+              (c) => !tiered.includes(c) && getRpcBucket(c.index).estimateWaitMs(priority) === 0
+            );
+            if (tieredWait > LOW_SPILLOVER_WAIT_MS && idle.length > 0) candidates = idle;
+          }
+        }
       }
     }
 
-    const selected = candidates[_rpcIndex % candidates.length];
+    const selected = pickLeastLoaded(candidates, priority, _rpcIndex);
     if (!selected) {
       throw new Error('No RPC candidate selected.');
     }

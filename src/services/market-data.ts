@@ -4,7 +4,6 @@ import {
   rpcCall,
   decodePumpCurve,
   PRIORITY,
-  runBoundedPool,
   jupiterRateLimit,
 } from '../core/utils.js';
 import { PUMP_FUN_PROGRAM_ID } from '../core/config.js';
@@ -169,7 +168,8 @@ export async function fetchDirectMarketData(
 export async function batchFetchDirectMarketData(
   ctx: Context,
   mints: string[],
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  priority: PRIORITY = PRIORITY.LOW
 ): Promise<Record<string, DirectMarketData>> {
   try {
     const now = Date.now();
@@ -243,7 +243,7 @@ export async function batchFetchDirectMarketData(
           // retry budget here stacked with the SOL-price fetch blew the 60s scan watchdog. 8s × 2
           // = 16s worst case keeps the scan pre-fetch under budget. Candidates are scan-side, not
           // positions — a missed price just defers the buy one cycle.
-          { priority: PRIORITY.LOW, timeoutMs: 8000, maxAttempts: 2, signal }
+          { priority, timeoutMs: 8000, maxAttempts: 2, signal }
         )) as { value: Array<{ data: string[] } | null> };
 
         const partial: Record<string, DirectMarketData> = {};
@@ -432,15 +432,14 @@ export async function fetchPricesBestEffort(
   const startedAt = Date.now();
   const key = apiKey || ctx.config.jupiterApiKey;
 
-  const runOnChain = (list: string[]) =>
-    runBoundedPool(
-      list,
-      async (mint) => {
-        const direct = await fetchDirectMarketData(ctx, mint);
-        return direct ? { [mint]: direct } : null;
-      },
-      { concurrency: ctx.config.priceFallbackParallelism || 5 }
-    );
+  // One getMultipleAccounts for every pump mint (not one getAccountInfo each). Completed curves
+  // are dropped: they read as zero liquidity, and Jupiter prices the graduated token.
+  const runOnChain = async (list: string[]) => {
+    const batch = await batchFetchDirectMarketData(ctx, list, undefined, PRIORITY.MEDIUM);
+    return Object.entries(batch)
+      .filter(([, d]) => !d.isCompleted)
+      .map(([mint, d]) => ({ status: 'fulfilled' as const, value: { [mint]: d }, item: mint }));
+  };
 
   const prices: PriceMap = {};
   let apiResult: PriceMap = {};
@@ -488,9 +487,10 @@ export async function fetchPricesBestEffort(
       }
     }
   } else {
-    // Default (monitor/position path): Jupiter batch + on-chain in parallel, then a per-mint
-    // Jupiter fan-out for anything still missing. Higher Jupiter volume, but this path runs on the
-    // separate position API key and needs Jupiter for graduated tokens the curve can't price.
+    // Default (monitor/position path): one Jupiter batch + one curve batch in parallel. There is
+    // no per-mint Jupiter retry: when the batch call fails, N single calls on the same 1 req/s
+    // bucket fail the same way and just starve the exits queued behind them. Mints still unpriced
+    // fall through to local market state below.
     const [api, onChainResults] = await Promise.all([
       fetchPrices(ctx, uniqueMints, key),
       runOnChain(uniqueMints),
@@ -498,21 +498,7 @@ export async function fetchPricesBestEffort(
     apiResult = api;
     Object.assign(prices, apiResult);
     directCount = mergeOnChainResults(prices, onChainResults);
-
-    const stillMissingMints = uniqueMints.filter((m) => !prices[m] || !(prices[m].usdPrice > 0));
-    fallbackCount = stillMissingMints.length;
-    if (stillMissingMints.length > 0) {
-      const fallbackResults = await runBoundedPool(
-        stillMissingMints,
-        async (mint) => fetchPrices(ctx, [mint], key),
-        { concurrency: ctx.config.priceFallbackParallelism || 1 }
-      );
-      for (const r of fallbackResults) {
-        if (r.status === 'fulfilled' && r.value) {
-          Object.assign(prices, r.value);
-        }
-      }
-    }
+    fallbackCount = uniqueMints.filter((m) => !prices[m] || !(prices[m].usdPrice > 0)).length;
   }
 
   // Sync all resolved prices into Local Market State Store & Price History Engine

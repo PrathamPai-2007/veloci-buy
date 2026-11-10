@@ -14,6 +14,8 @@ export interface TokenBucket {
   acquire(priority?: PRIORITY, signal?: AbortSignal): Promise<void>;
   /** Halves the refill rate for `ms` (call on an upstream 429). */
   penalize(ms: number): void;
+  /** Estimated ms until a request at `priority` would be granted (0 = immediately). */
+  estimateWaitMs(priority?: PRIORITY): number;
 }
 
 /**
@@ -99,6 +101,18 @@ export function makePriorityTokenBucket(ratePerSec: number): TokenBucket {
     penalize(ms: number): void {
       refill();
       penaltyUntil = Math.max(penaltyUntil, Date.now() + ms);
+    },
+    estimateWaitMs(priority: PRIORITY = PRIORITY.MEDIUM): number {
+      refill();
+      // Waiters at this priority or higher are served before us.
+      const ahead = PRIORITY_ORDER.filter((p) => p <= priority).reduce(
+        (n, p) => n + queues[p].length,
+        0
+      );
+      const missing = ahead + 1 - tokens;
+      if (missing <= 0) return 0;
+      const step = intervalMs();
+      return Math.max(0, Math.ceil(missing) * step - (Date.now() - lastRefillAt));
     },
   };
 }

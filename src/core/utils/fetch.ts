@@ -66,6 +66,28 @@ export function coalesce<T>(
   return promise;
 }
 
+const RATE_LIMIT_PENALTY_MS = 30_000;
+/** Ignore absurd Retry-After values (a misbehaving upstream must not park a bucket for hours). */
+const MAX_RETRY_AFTER_MS = 120_000;
+
+/** Parses a `Retry-After` header (delta-seconds or HTTP date) to ms, or null when absent/invalid. */
+export function parseRetryAfterMs(
+  value: string | null | undefined,
+  now = Date.now()
+): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  let ms: number;
+  if (/^\d+(\.\d+)?$/.test(trimmed)) ms = Number(trimmed) * 1000;
+  else {
+    const at = Date.parse(trimmed);
+    if (!Number.isFinite(at)) return null;
+    ms = at - now;
+  }
+  if (!(ms > 0)) return null;
+  return Math.min(ms, MAX_RETRY_AFTER_MS);
+}
+
 export function isRateLimitError(e: unknown): boolean {
   return /\b429\b|too many requests/i.test(e instanceof Error ? e.message : String(e));
 }
@@ -136,10 +158,14 @@ export async function fetchJson<T = unknown>(
       if (!response.ok) {
         const details = data ? safeJsonStringify(data) : text || '(empty body)';
         if (response.status === 429) {
-          bucket?.penalize(30_000);
+          // Honour the server's own Retry-After when it sends one; otherwise the fixed penalty.
+          const serverWaitMs = parseRetryAfterMs(response.headers?.get?.('retry-after'));
+          bucket?.penalize(serverWaitMs ?? RATE_LIMIT_PENALTY_MS);
           throw new RateLimitError(
             `HTTP 429 Rate Limit for ${safeUrl}: ${details}`,
-            retryDelayMs * Math.pow(2, attempt)
+            serverWaitMs ?? retryDelayMs * Math.pow(2, attempt),
+            undefined,
+            serverWaitMs !== null
           );
         }
         throw new Error(`HTTP ${response.status} for ${safeUrl}: ${details}`);

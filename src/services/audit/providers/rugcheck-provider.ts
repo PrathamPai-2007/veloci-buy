@@ -5,6 +5,15 @@ function rugcheckRateLimit(ctx: Context): { key: string; rps: number; priority: 
   return { key: 'rugcheck', rps: ctx.config.rugcheckRps || 1, priority: PRIORITY.LOW };
 }
 
+const WALLET_RISK_TTL_MS = 10 * 60_000;
+const WALLET_RISK_CACHE_MAX = 5000;
+const walletRiskCache = new Map<string, { high: boolean; expiresAt: number }>();
+
+/** @testOnly */
+export function _clearWalletRiskCacheForTest(): void {
+  walletRiskCache.clear();
+}
+
 interface RugCheckRisk {
   name: string;
   level: 'danger' | 'warn' | string;
@@ -84,6 +93,10 @@ export async function fetchRugCheckWalletSignals(
   const results = await runBoundedPool(
     addresses,
     async (addr) => {
+      // Insiders and creators recur across candidates; a wallet's risk level doesn't change in
+      // minutes, so don't spend 1 req/s budget re-asking. Failures are never cached.
+      const cached = walletRiskCache.get(addr);
+      if (cached && cached.expiresAt > Date.now()) return cached.high ? addr : null;
       try {
         const url = `${ctx.config.rugcheckBaseUrl}/wallet/${addr}/risk`;
         const payload = (await fetchJson(url, {
@@ -94,7 +107,13 @@ export async function fetchRugCheckWalletSignals(
         })) as {
           riskLevel?: string;
         };
-        return payload.riskLevel === 'high' ? addr : null;
+        const high = payload.riskLevel === 'high';
+        if (walletRiskCache.size >= WALLET_RISK_CACHE_MAX) {
+          const oldest = walletRiskCache.keys().next().value;
+          if (oldest !== undefined) walletRiskCache.delete(oldest);
+        }
+        walletRiskCache.set(addr, { high, expiresAt: Date.now() + WALLET_RISK_TTL_MS });
+        return high ? addr : null;
       } catch {
         return null;
       }

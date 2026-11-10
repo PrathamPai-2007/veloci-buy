@@ -140,10 +140,13 @@ test('services backs off Jupiter (no per-mint fan-out) when the batch is rate-li
   );
 });
 
-test('services price refresh runs batch API and direct RPC fallback concurrently', async () => {
+test('services price refresh runs the Jupiter batch and ONE batched curve read concurrently', async () => {
   const ctx = createCtx({ priceFallbackParallelism: 2 });
-  const mintA = SOL_MINT;
-  const mintB = '5U3D1bg3jFL2n3zPXSkwQnQKvU4uEPrKzJ6aXvQf6tTq';
+  (ctx as any).getSolUsdPrice = async () => 150;
+  // pump.fun mints (…pump suffix): both curves are read with a single getMultipleAccounts call,
+  // not one getAccountInfo each.
+  const mintA = '6jRbG2v9LYYCQibicotGxp1Ubpdn2863rN1mDXAQpump';
+  const mintB = '3LxmuE86SyG5M8SbVRBNaMWdKibdwFAyqbksm7HTpump';
   const mints = [mintA, mintB];
   let rpcCalls = 0;
   const delayMs = 80;
@@ -184,7 +187,7 @@ test('services price refresh runs batch API and direct RPC fallback concurrently
 
       assert.equal(prices[mintA]!.usdPrice, 1);
       assert.equal(prices[mintB]!.usdPrice, 2);
-      assert.equal(rpcCalls, 2);
+      assert.equal(rpcCalls, 1);
       assert.ok(elapsed < delayMs * 2.5, `expected parallel refresh, got ${elapsed}ms`);
     }
   );

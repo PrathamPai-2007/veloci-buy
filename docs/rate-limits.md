@@ -3,7 +3,7 @@
 Every outbound call goes through a **priority token bucket** (`src/core/utils/rate-limit.ts`).
 HTTP calls take a token on **every attempt**, retries included (`fetchJson({ rateLimit })`).
 RPC calls take one in `rpcCall`. When a bucket's upstream answers 429, the bucket halves its rate
-for 30 s.
+for 30 s, or for the `Retry-After` the server sent (capped at 2 min).
 
 Priorities, highest first: `ULTRA_HIGH` (swap orders, Jito sends) → `HIGH` (monitor/exit
 prices) → `MEDIUM` → `LOW` (discovery, scans, audits, notifications). A waiting exit is always
@@ -38,7 +38,7 @@ served before queued scan traffic in the same bucket.
 - **Circuit breakers:** there are two, `jupiterDiscoveryBreaker` and `jupiterPositionBreaker`,
   so discovery failures never suppress position pricing.
   - Three consecutive failures open a breaker for 60 s.
-  - A 429 opens it immediately for 30 s.
+  - A 429 opens it immediately for 30 s, or for the server's `Retry-After` when it sends one.
   - After the cooldown, a single probe call decides whether it closes.
   - While a breaker is open, prices come from on-chain curve reads.
 - **Retries:**
@@ -46,11 +46,20 @@ served before queued scan traffic in the same bucket.
   - `/swap/v2/execute` is **never** auto-retried, because a signed transaction can still land
     after a timeout.
   - Price and feed calls use `retries: 0`.
+- **Position pricing is one Jupiter batch plus one on-chain batch** (a single
+  `getMultipleAccounts` for every pump curve). There is no per-mint Jupiter retry after a batch
+  failure: N single calls on the same 1 req/s bucket fail the same way and only starve exits.
+  Mints still unpriced fall back to local market state.
+- **Fresh local prices skip the network.** Pump.fun `TradeEvent`s from the program-log
+  subscription keep price, liquidity and the trade tape current for watched mints, so the scan
+  pre-fetch and the monitor only call out for mints with no recent local trade.
+- **Graduated tokens** (curve complete, 0 real SOL) are priced by Jupiter, not the empty curve.
 
 ## RugCheck
 
 The free account key allows 60 req/min, so the bucket runs at 1 req/s. The token report and
-wallet-risk checks share that budget and use `retries: 0`.
+wallet-risk checks share that budget and use `retries: 0`. Wallet risk levels are cached for
+10 minutes per address (failures are never cached), so recurring insiders cost one call.
 
 On a failure, `fetchRugCheckSignals` returns `status: 'error'`. The engine then continues with
 on-chain mint, freeze and concentration signals only.
@@ -81,6 +90,9 @@ Override them with `RPC_RATE_LIMITS` (e.g. `50,5`) and `RPC_SEND_TX_RATE_LIMITS`
 
 - **Sharding:** `HIGH`, `ULTRA_HIGH` and `MEDIUM` calls prefer premium endpoints; `LOW` calls
   (scans, discovery `getTransaction`) prefer free ones.
+- **Endpoint choice:** within the preferred tier, each call goes to the endpoint whose bucket
+  would grant it soonest (ties rotate), not strict round-robin. `LOW` calls may spill onto a
+  premium endpoint only while the free tier is backed up and that premium bucket has no waiters.
 - **Multiple endpoints:** only list endpoints with independent limits. The same key listed twice
   will 429.
 - **429 handling:** a 429 penalizes that endpoint's bucket for 30 s and rotates the call to
@@ -98,6 +110,8 @@ Override them with `RPC_RATE_LIMITS` (e.g. `50,5`) and `RPC_SEND_TX_RATE_LIMITS`
 - `withHeavySlot` allows **one heavy call in flight**. The slot is held until the call settles,
   and the next call starts at least 300 ms later.
 - The request timeout starts when the call is sent, not while it is queued for the slot.
+- Holder snapshots (`getTokenLargestAccounts`) queue by priority: a final audit about to buy is
+  served before queued scan-side lookups.
 - **One retry budget per call.** The on-chain auditor calls `rpcCall` with `maxAttempts: 1`
   inside its own `MINT_SIGNAL_MAX_ATTEMPTS` loop, which also absorbs RPC indexing lag. Nested
   loops of 3 × 3 = 9 retries are gone.

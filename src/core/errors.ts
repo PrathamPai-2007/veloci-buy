@@ -16,7 +16,9 @@ export class RateLimitError extends BaseError {
   constructor(
     message: string,
     public readonly retryAfterMs: number = 1000,
-    cause?: unknown
+    cause?: unknown,
+    /** True when `retryAfterMs` came from the upstream's Retry-After header, not our own backoff. */
+    public readonly fromServer: boolean = false
   ) {
     super(message, 'RATE_LIMIT_EXCEEDED', cause);
   }
