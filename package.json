@@ -30,7 +30,7 @@
     "lint": "eslint .",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
-    "audit": "npm audit",
+    "audit": "npm audit --omit=dev --audit-level=high",
     "analyze-pnl": "tsx src/core/pnl-analyzer.ts",
     "backtest": "node --import tsx scripts/backtest-entries.ts",
     "manage-keystore": "tsx scripts/manage-keystore.ts",
