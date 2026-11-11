@@ -55,7 +55,6 @@ export function createState(overrides: Partial<State> = {}): State {
     recentPnlWindow: [],
     lossStreakPauseActive: false,
     mintToPool: new Map(),
-    prefetchedMintSignals: new Map(),
     metrics: {
       discoveredCandidates: 0,
       passedCheapAudit: 0,

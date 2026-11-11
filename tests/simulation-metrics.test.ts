@@ -74,7 +74,6 @@ describe('Post-Migration Simulation & Metrics Benchmark', () => {
       store,
       state: {
         pendingCandidateRechecks: new Map([[survMint, {} as any]]),
-        prefetchedMintSignals: new Map(),
       },
     };
 

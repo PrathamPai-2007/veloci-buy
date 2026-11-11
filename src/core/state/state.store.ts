@@ -104,7 +104,6 @@ export class StateStore extends EventEmitter {
       consecutiveLosses: 0,
       recentPnlWindow: [],
       lossStreakPauseActive: false,
-      prefetchedMintSignals: new Map(),
       mintToPool: new Map(),
     };
   }
@@ -117,7 +116,6 @@ export class StateStore extends EventEmitter {
     if (this.state.processedMints.has(mint)) return;
 
     this.state.pendingCandidateRechecks.delete(mint);
-    this.state.prefetchedMintSignals.delete(mint);
     this.persistence.runRemoveRecheck(mint);
 
     this.state.processedMints.add(mint);

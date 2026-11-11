@@ -1,6 +1,6 @@
 import type { LaunchHistoryEntry, MarketSnapshot, TokenMetadata } from './market.js';
 import type { ClosedTrade, Position } from './position.js';
-import type { MintSignals, TrainingSample } from './signals.js';
+import type { TrainingSample } from './signals.js';
 
 export interface RecheckItem {
   mint: string;
@@ -146,7 +146,6 @@ export interface State {
    */
   lossStreakPauseActive: boolean;
   /** In-memory cache of mint signals pre-fetched during survival delays. Not persisted. */
-  prefetchedMintSignals: Map<string, MintSignals>;
   /** Maps token mint → pool address for Raydium/Meteora pools. Populated by Geyser handlers. Not persisted. */
   mintToPool: Map<string, string>;
   /** In-memory cache of vault token balances updated via Geyser. Not persisted. */
