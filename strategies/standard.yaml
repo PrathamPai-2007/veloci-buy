@@ -83,8 +83,8 @@ survivalDelaySeconds: 20
 survivalDelayThresholdHigh: 75
 survivalDelayThresholdVeryHigh: 90
 finalAuditSeconds: 5
-minSurvivalMomentum: 1.05
-minBreakoutMultiplier: 1.05
+minSurvivalMomentum: 1.025
+minBreakoutMultiplier: 1.025
 maxPriceDumpPct: 18
 maxLiquidityDrawdownPct: 15
 maxSurvivalGrowthPct: 450
