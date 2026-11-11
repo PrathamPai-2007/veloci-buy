@@ -47,7 +47,7 @@ export async function fetchRecentLaunches(ctx: Context): Promise<TokenMetadata[]
     })) as TokenMetadata[];
     if (!Array.isArray(data)) throw new Error('Unexpected Jupiter recent response shape.');
     return data.filter(
-      (t) => t?.id && (t.launchpad === 'pump.fun' || !t.launchpad || isPumpMintAddress(t.id))
+      (t) => t?.id && (t.launchpad === 'pump.fun' || isPumpMintAddress(t.id))
     );
   }, []);
 }
