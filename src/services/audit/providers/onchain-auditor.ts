@@ -9,6 +9,7 @@ import {
 } from '#core/utils.js';
 import { Context, MintSignals } from '#types/index.js';
 import { tokenAccountIndex } from '#services/account-index/index.js';
+import { getLedgerHolders } from '#services/market-state/holder-ledger.js';
 
 interface ParsedMintInfo {
   decimals: number;
@@ -37,6 +38,18 @@ export function dropCurveAccounts<T extends { owner?: string | null }>(
   curvePda: string
 ): T[] {
   return curvePda ? accounts.filter((a) => a.owner !== curvePda) : accounts;
+}
+
+/** Top holders rebuilt from the trade tape (no RPC), or null when the tape is not provably complete. */
+function tapeHolders(mint: string, supplyRaw: bigint): MintSignals['topAccounts'] | null {
+  const holders = getLedgerHolders(mint, TOP_HOLDER_COUNT);
+  if (!holders || holders.length === 0) return null;
+  return holders.map((h) => ({
+    address: h.owner,
+    rawAmount: h.rawAmount,
+    share: bigintRatioToNumber(h.rawAmount, supplyRaw),
+    owner: h.owner,
+  }));
 }
 
 function concentrationShares(accounts: { share: number }[]): {
@@ -142,6 +155,22 @@ export async function getMintSignals(
   }
   const supplyRaw = BigInt(mintInfo.supply || '0');
 
+  const fromTape = tapeHolders(mint, supplyRaw);
+  if (fromTape) {
+    ctx.store?.incrementMetric('holdersFromTape', 1);
+    const signals: MintSignals = {
+      decimals: Number(mintInfo.decimals || 0),
+      supplyRaw,
+      mintAuthority: mintInfo.mintAuthority || null,
+      freezeAuthority: mintInfo.freezeAuthority || null,
+      ...concentrationShares(fromTape),
+      holdersKnown: true,
+      topAccounts: fromTape,
+    };
+    setCachedMintSignals(mint, signals);
+    return signals;
+  }
+
   // Local-First: Initialize holder snapshot if not indexed, then read from tokenAccountIndex
   if (!tokenAccountIndex.isIndexed(mint)) {
     await tokenAccountIndex.initializeMintSnapshot(
@@ -230,9 +259,12 @@ export async function getMintSignals(
     mintAuthority: mintInfo.mintAuthority || null,
     freezeAuthority: mintInfo.freezeAuthority || null,
     ...concentrationShares(ownerDetails),
+    holdersKnown: indexedHolders.length > 0,
     topAccounts: ownerDetails,
   };
-  setCachedMintSignals(mint, signals);
+  // Never cache a result with no holder data: the next audit must try again.
+  if (signals.holdersKnown) setCachedMintSignals(mint, signals);
+  else ctx.store?.incrementMetric('holdersUnknown', 1);
   return signals;
 }
 
@@ -309,9 +341,15 @@ export async function batchGetMintSignals(
 
   if (validMints.length === 0) return results;
 
+  const tapeTop = new Map<string, MintSignals['topAccounts']>();
   const largestAccountsMap = new Map<string, { address: string; amount: string }[]>();
   for (const { mint, info } of validMints) {
     const supplyRaw = BigInt(info.supply || '0');
+    const fromTape = tapeHolders(mint, supplyRaw);
+    if (fromTape) {
+      tapeTop.set(mint, fromTape);
+      continue;
+    }
     if (!tokenAccountIndex.isIndexed(mint)) {
       await tokenAccountIndex.initializeMintSnapshot(
         ctx,
@@ -334,6 +372,7 @@ export async function batchGetMintSignals(
   const mintToHolders = new Map<string, { address: string; rawAmount: bigint; share: number }[]>();
 
   for (const { mint, info } of validMints) {
+    if (tapeTop.has(mint)) continue;
     const holdersRaw = largestAccountsMap.get(mint) || [];
     const supplyRaw = BigInt(info.supply || '0');
     const holders = holdersRaw.slice(0, TOP_HOLDER_FETCH).map((h) => {
@@ -385,6 +424,22 @@ export async function batchGetMintSignals(
   }
 
   for (const { mint, info } of validMints) {
+    const tape = tapeTop.get(mint);
+    if (tape) {
+      ctx.store?.incrementMetric('holdersFromTape', 1);
+      const signals: MintSignals = {
+        decimals: Number(info.decimals || 0),
+        supplyRaw: BigInt(info.supply || '0'),
+        mintAuthority: info.mintAuthority || null,
+        freezeAuthority: info.freezeAuthority || null,
+        ...concentrationShares(tape),
+        holdersKnown: true,
+        topAccounts: tape,
+      };
+      setCachedMintSignals(mint, signals);
+      results.set(mint, signals);
+      continue;
+    }
     const holders = mintToHolders.get(mint) || [];
     const topAccounts = dropCurveAccounts(
       holders.map((h) => ({
@@ -400,9 +455,10 @@ export async function batchGetMintSignals(
       mintAuthority: info.mintAuthority || null,
       freezeAuthority: info.freezeAuthority || null,
       ...concentrationShares(topAccounts),
+      holdersKnown: holders.length > 0,
       topAccounts,
     };
-    setCachedMintSignals(mint, signals);
+    if (signals.holdersKnown) setCachedMintSignals(mint, signals);
     results.set(mint, signals);
   }
 

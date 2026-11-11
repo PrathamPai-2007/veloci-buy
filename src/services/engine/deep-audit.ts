@@ -61,6 +61,15 @@ export async function runDeepAudit(input: DeepAuditInput): Promise<DeepAuditResu
       : Promise.resolve(null),
   ]);
 
+  // Never buy blind: with no holder data every concentration share reads 0% and passes.
+  if (mintSignals.holdersKnown === false) {
+    addBlocker(
+      'Holder data unavailable; refusing to buy without a holder check.',
+      'holders-unknown',
+      true
+    );
+  }
+
   if (mintSignals.mintAuthority) {
     addBlocker(`Mint authority set: ${mintSignals.mintAuthority}`, 'mint-authority-enabled');
   }

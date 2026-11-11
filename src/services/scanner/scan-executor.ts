@@ -15,7 +15,6 @@ import {
   scheduleRecheckEligibleWaitlist,
   scheduleSurvivalDelay,
 } from './scan-scheduler.js';
-import { batchPreFetchAudits } from './scan-auditor.js';
 import { prefetchBuyQuote } from './stages/price-fetcher.js';
 export { refreshMarketSnapshots } from './stages/price-fetcher.js';
 import {
@@ -281,8 +280,6 @@ export async function scanForCandidates(
     (a, b) => Number(b.token.isTrending ?? false) - Number(a.token.isTrending ?? false)
   );
 
-  const batchedSignalsMap = await batchPreFetchAudits(ctx, heavyAudits);
-
   const processItem = async (item: WorkItem): Promise<void> => {
     const isFinalAudit = item.recheckEntry?.isFinalAudit;
 
@@ -349,12 +346,6 @@ export async function scanForCandidates(
           highestSeenPriceUsd: local.highestSeenPriceUsd,
         };
       }
-      // Skip the liquidity-drain check when the current reading is local and the start reading
-      // came from Jupiter: the two measure different things (real vs virtual reserves).
-      const liquidityAtStart = local.liquidityFromLocal
-        ? undefined
-        : item.recheckEntry?.tokenSnapshot?.liquidity;
-
       const auditStart = Date.now();
       let evaluation: EvaluationResult;
       try {
@@ -362,12 +353,11 @@ export async function scanForCandidates(
           highestSeenPriceUsd: local.highestSeenPriceUsd,
           priceHistory: local.priceHistory,
           priceAtStartOfDelay: item.recheckEntry?.basePriceUsd,
-          liquidityAtStartOfDelay: liquidityAtStart,
+          liquidityAtStartOfDelay: local.liquidityAtStartUsd,
           tapeAtStart: local.tapeAtStart,
           tapeHistory: local.tapeHistory,
           depth,
           priority,
-          preFetchedSignals: batchedSignalsMap.get(token.id),
         });
       } finally {
         stageDurations[depth === 'full' ? 'heavyAuditMs' : 'lightAuditMs'].push(

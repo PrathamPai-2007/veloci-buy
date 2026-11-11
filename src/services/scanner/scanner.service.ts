@@ -11,7 +11,6 @@ import { scanForCandidates, refreshMarketSnapshots } from './scan-executor.js';
 import { scanCoordinator } from './scan-coordinator.js';
 
 export * from './scan-scheduler.js';
-export * from './scan-auditor.js';
 export * from './scan-executor.js';
 export * from './scan-coordinator.js';
 

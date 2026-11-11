@@ -16,6 +16,8 @@ export interface MintSignals {
   top1Share: number;
   top3Share: number;
   top5Share: number;
+  /** False when no holder data could be obtained (rate limit / failure): the shares are not real. */
+  holdersKnown?: boolean;
   topAccounts: Array<{
     address: string;
     rawAmount: bigint;

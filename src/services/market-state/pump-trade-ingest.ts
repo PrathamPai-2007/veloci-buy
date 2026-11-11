@@ -4,6 +4,7 @@ import { estimateSolUsdPrice, getCachedSolUsdPrice } from '../trading/paper-brok
 import { localMarketState } from './local-market-state.js';
 import { marketTapeManager } from './market-tape-manager.js';
 import { priceHistoryEngine } from './price-history-engine.js';
+import { applyHolderTrade } from './holder-ledger.js';
 
 /** Mints we want trades for: just launched / queued by the scanner, or held. Everything else is dropped. */
 const WATCH_TTL_MS = 10 * 60 * 1000;
@@ -13,6 +14,19 @@ const watched = new Map<string, number>();
 const SOL_PRICE_REFRESH_MS = 60_000;
 /** pump.fun mints are 6-decimal, 1B supply. */
 const PUMP_SUPPLY_TOKENS = 1_000_000_000;
+
+/** Recent real-curve liquidity readings per mint, so a pull during the survival window is visible. */
+const liquidityTrail = new Map<string, { t: number; usd: number }[]>();
+const TRAIL_MAX_POINTS = 200;
+
+/** Highest curve liquidity seen at or after `sinceMs`, or undefined when none was recorded. */
+export function getLiquidityPeak(mint: string, sinceMs: number): number | undefined {
+  let peak: number | undefined;
+  for (const p of liquidityTrail.get(mint) ?? []) {
+    if (p.t >= sinceMs && (peak === undefined || p.usd > peak)) peak = p.usd;
+  }
+  return peak;
+}
 
 export function watchMint(mint: string, now = Date.now()): void {
   if (watched.size >= MAX_WATCHED && !watched.has(mint)) {
@@ -50,6 +64,14 @@ export function ingestPumpTrade(ctx: Context, trade: PumpTradeEvent, now = Date.
     now,
     trade.user
   );
+  applyHolderTrade(
+    trade.mint,
+    trade.user,
+    trade.isBuy,
+    trade.tokenAmount,
+    trade.realTokenReserves,
+    now
+  );
 
   if (!(sol.price > 0)) return true; // tape recorded; price needs a SOL/USD rate first
   const vSol = Number(trade.virtualSolReserves) / 1e9;
@@ -59,6 +81,13 @@ export function ingestPumpTrade(ctx: Context, trade: PumpTradeEvent, now = Date.
   const priceUsd = (vSol / vTok) * sol.price;
   const liquidityUsd = (Number(trade.realSolReserves) / 1e9) * 2 * sol.price;
   priceHistoryEngine.pushPrice(trade.mint, 0, priceUsd, now);
+  const trail = liquidityTrail.get(trade.mint) ?? [];
+  trail.push({ t: now, usd: liquidityUsd });
+  if (trail.length > TRAIL_MAX_POINTS) trail.shift();
+  liquidityTrail.set(trade.mint, trail);
+  if (liquidityTrail.size > MAX_WATCHED) {
+    liquidityTrail.delete(liquidityTrail.keys().next().value as string);
+  }
 
   const existing = localMarketState.getSnapshot(trade.mint);
   const flow = marketTapeManager.getSwapVolume(trade.mint, 60_000);

@@ -73,6 +73,8 @@ export interface StateMetrics {
   tokenLargestRequestFinished?: number;
   holderInitRequests?: number;
   holderInit429s?: number;
+  holdersFromTape?: number;
+  holdersUnknown?: number;
   batchOwnerLookupRequests?: number;
   batchOwnerLookup429s?: number;
   batchAuditDurationMs?: number;

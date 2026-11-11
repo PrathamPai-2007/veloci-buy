@@ -1,6 +1,7 @@
 import type { RecheckItem, TokenMetadata } from '#types/index.js';
 import { marketDataProvider } from '../../market-state/market-data-provider.js';
 import { marketTapeManager } from '../../market-state/market-tape-manager.js';
+import { getLiquidityPeak } from '../../market-state/pump-trade-ingest.js';
 
 /** Local snapshots older than this are ignored in favour of whatever the token already carried. */
 const LOCAL_FRESH_MS = 15_000;
@@ -9,9 +10,12 @@ const MAX_TAPE_POINTS = 24;
 
 export interface LocalEvalInputs {
   token: TokenMetadata;
-  /** True when liquidity was replaced by the local reading (curve real reserves), which is not
-   *  comparable with the Jupiter-sourced liquidity the entry started with. */
-  liquidityFromLocal: boolean;
+  /**
+   * Baseline for the liquidity-drain guard in the SAME units as the current reading: the local
+   * curve-liquidity peak since the survival window began when the current reading is local, else
+   * the entry's own snapshot. Undefined when no like-for-like baseline exists.
+   */
+  liquidityAtStartUsd: number | undefined;
   highestSeenPriceUsd: number | null;
   priceHistory: { price: number; timestamp: number }[];
   tapeAtStart: { buys: number; sells: number } | null;
@@ -36,12 +40,12 @@ export function buildLocalEvalInputs(
   const details = marketDataProvider.getMarketPriceDetails(mint, LOCAL_FRESH_MS);
   const snap = marketDataProvider.getSnapshot(mint);
   const enriched: TokenMetadata = { ...token };
-  let liquidityFromLocal = false;
+  let liquidityAtStartUsd = entry?.tokenSnapshot?.liquidity;
   if (details.isFresh && snap && details.priceUsd != null) {
     enriched.usdPrice = details.priceUsd;
     if (snap.liquidityUsd > 0) {
       enriched.liquidity = snap.liquidityUsd;
-      liquidityFromLocal = true;
+      liquidityAtStartUsd = getLiquidityPeak(mint, startedAt);
     }
     if (!(Number(enriched.fdv) > 0) && snap.fdvUsd > 0) enriched.fdv = snap.fdvUsd;
   }
@@ -88,7 +92,7 @@ export function buildLocalEvalInputs(
 
   return {
     token: enriched,
-    liquidityFromLocal,
+    liquidityAtStartUsd,
     highestSeenPriceUsd: high > 0 ? high : null,
     priceHistory: history,
     tapeAtStart,
