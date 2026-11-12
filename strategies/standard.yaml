@@ -188,7 +188,7 @@ rugExitMaxSpreadPct: 0.15
 rugExitSpreadExpansionMultiplier: 2
 rugExitVolumeGuardEnabled: true
 rugExitSellDominanceMultiplier: 2.5
-liquidityCollapseThresholdUsd: 750
+liquidityCollapseThresholdUsd: 320 # entry floor = this x 1.25 = $400
 liquidityCollapseThresholdRatio: 0.25
 insiderDriftConcentrationTop5: 0.6
 
