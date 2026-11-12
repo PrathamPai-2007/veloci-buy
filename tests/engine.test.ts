@@ -748,3 +748,21 @@ test('engine will not buy below the liquidity-exit floor', async () => {
   const res = await engine.evaluateCandidate(ctx, token);
   assert.ok(res.rejectionReasons.some((r) => r.code === 'low-liquidity'));
 });
+
+test('low liquidity is recheck-eligible for a young curve but final for an old one', async () => {
+  const ctx = createCtx({ minLiquidityUsd: 400, liquidityCollapseThresholdUsd: 320 });
+  const mk = (ageSec: number): TokenMetadata =>
+    ({
+      id: `Mint${ageSec}`,
+      symbol: 'T',
+      name: 'T',
+      decimals: 6,
+      usdPrice: 1,
+      liquidity: 20,
+      firstPool: { id: 'p', createdAt: new Date(Date.now() - ageSec * 1000).toISOString() },
+    }) as TokenMetadata;
+  const lowLiq = (r: Awaited<ReturnType<typeof engine.evaluateCandidate>>) =>
+    r.rejectionReasons.find((x) => x.code === 'low-liquidity');
+  assert.equal(lowLiq(await engine.evaluateCandidate(ctx, mk(30)))?.recheckEligible, true);
+  assert.equal(lowLiq(await engine.evaluateCandidate(ctx, mk(900)))?.recheckEligible, false);
+});

@@ -332,7 +332,12 @@ export async function evaluateCandidate(
     addBlocker(
       `Low liquidity ${formatUsd(liquidity)}.`,
       'low-liquidity',
-      isUnbornMint || isNonPump || isSlightlyBelowThreshold(ctx, liquidity, minLiquidityUsd)
+      isUnbornMint ||
+        isNonPump ||
+        // A young curve has little SOL in it yet; let it grow instead of blacklisting it at birth.
+        ageSeconds == null ||
+        ageSeconds < ZERO_BUYS_YOUNG_SECONDS ||
+        isSlightlyBelowThreshold(ctx, liquidity, minLiquidityUsd)
     );
   }
 

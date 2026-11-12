@@ -46,7 +46,7 @@ export function scheduleRecheckEligibleWaitlist(
   const { config, store } = ctx;
   const now = Date.now();
   const keep = carried(item, now);
-  const isZeroBuys = code === 'zero-buys';
+  const isZeroBuys = code === 'zero-buys' || code === 'low-liquidity';
   // Zero buys is "the tape hasn't caught up yet" for a fresh mint: wait for it, but not forever.
   if (isZeroBuys && now - (keep.firstSeenAt ?? now) > ZERO_BUYS_GIVE_UP_MS) {
     store.trackMint(item.token.id);
