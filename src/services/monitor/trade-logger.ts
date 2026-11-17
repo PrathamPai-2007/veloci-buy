@@ -205,6 +205,7 @@ export function recordClosedTrade(ctx: Context, pos: Position, reason: string): 
     holdTimeSeriesJson: pos.timeSeries ? JSON.stringify(pos.timeSeries) : undefined,
     entryMarketCapUsd: pos.entryMarketCapUsd,
     exitPriceUsd: pos.exitPriceUsd,
+    entrySignals: pos.entrySignals,
     isGhost: false,
     mode: pos.mode || (ctx.config.paperTrading ? 'paper' : 'live'),
   } as ClosedTrade & { mode?: string };

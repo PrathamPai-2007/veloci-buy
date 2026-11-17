@@ -114,6 +114,8 @@ maxBuysPerScan: 2
 maxPositionsPerLaunchpad: 3
 maxBuyLiquidityFraction: 0.15
 slippageBps: 500
+# Paper fills lose this much per side (pump.fun 1% fee + curve impact). slippageBps is only the live cap.
+paperFrictionBps: 150
 maxAutoSlippageRetry: 3
 autoSlippageIncrementBps: 100
 inlineSwapSimulation: true

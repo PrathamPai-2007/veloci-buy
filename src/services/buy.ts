@@ -13,6 +13,7 @@ import {
 import fs from 'node:fs';
 import path from 'node:path';
 import { SOL_MINT } from '#core/config.js';
+import { buildEntrySignals } from './entry-signals.js';
 import * as trading from './trading/trading.service.js';
 import * as monitor from './monitor/monitor.service.js';
 import { portfolioService } from './trading/portfolio.service.js';
@@ -247,6 +248,7 @@ async function executePaperBuy(
     volatilityScaler: evaluation.volatilityScaler || 0,
     launchpad: token.launchpad || null,
     entryScore: candidateScore,
+    entrySignals: buildEntrySignals(token, evaluation),
     paperEntryQuoteOutAmount: quote.outAmount.toString(),
     minTpReached: false,
     minTpArmed: false,
@@ -483,6 +485,7 @@ async function executeLiveBuy(
     volatilityScaler: evaluation.volatilityScaler || 0,
     launchpad: token.launchpad || null,
     entryScore: candidateScore,
+    entrySignals: buildEntrySignals(token, evaluation),
     buySignature: sig,
     minTpReached: false,
     minTpArmed: false,

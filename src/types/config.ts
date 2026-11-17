@@ -54,6 +54,8 @@ export interface Config {
   buyAmountSolText: string;
   buyAmountLamports: bigint;
   slippageBps: number;
+  /** Per-side cost (bps) the paper broker charges on every fill: pump.fun fee plus curve impact. Not the live slippage cap. */
+  paperFrictionBps: number;
   maxConcurrentAudits: number;
   scanParallelismLight: number;
   scanParallelismHeavy: number;

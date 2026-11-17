@@ -218,7 +218,7 @@ export async function buildPaperBuyQuote(
   const val = solDetails.price * Number(atomicToDecimalString(buyLamports, 9, 9));
   const units = val / p;
   const raw = BigInt(decimalToAtomic(units.toFixed(Math.min(decimals, 9)), decimals));
-  const out = (raw * BigInt(Math.max(0, 10000 - ctx.config.slippageBps))) / 10000n;
+  const out = (raw * BigInt(Math.max(0, 10000 - ctx.config.paperFrictionBps))) / 10000n;
   if (out <= 0n) throw new Error('Paper buy rounded to zero.');
   return {
     outAmount: out,
@@ -249,7 +249,7 @@ export async function buildPaperSellQuote(
   const solDetails = await estimateSolUsdPriceDetails(ctx, apiKey);
   const val = Number(atomicToDecimalString(rawAmount, dec, 9)) * pUsd;
   const rawLamports = BigInt(decimalToAtomic((val / solDetails.price).toFixed(9), 9));
-  const out = (rawLamports * BigInt(Math.max(0, 10000 - ctx.config.slippageBps))) / 10000n;
+  const out = (rawLamports * BigInt(Math.max(0, 10000 - ctx.config.paperFrictionBps))) / 10000n;
   if (out <= 0n) throw new Error('Paper sell rounded to zero.');
   return {
     outAmount: out,

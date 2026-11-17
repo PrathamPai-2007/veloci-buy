@@ -79,6 +79,7 @@ export interface Position {
   timeSeries?: [number, number, number][];
   entryMarketCapUsd?: number;
   exitPriceUsd?: number;
+  entrySignals?: EntrySignals;
   orphan?: boolean;
   /** Pool address for local swap routing (Raydium/Meteora). Populated at entry time from mintToPool. */
   poolAddress?: string;
@@ -156,6 +157,24 @@ export interface GhostPosition {
   takeProfitMultiples?: number[];
 }
 
+/** What the bot could see at entry; kept on the position and the closed trade for post-mortems. */
+export interface EntrySignals {
+  ageSeconds: number | null;
+  liquidityUsd: number;
+  liquidityPeak60sUsd: number | null;
+  holdersKnown: boolean | null;
+  top1Share: number | null;
+  top3Share: number | null;
+  top5Share: number | null;
+  tapeTrades: number;
+  tapeBuys: number;
+  tapeSells: number;
+  tapeUniqueBuyers: number;
+  tapeNetInflowSol: number;
+  tapeRoundTripWallets: number;
+  creatorSold: boolean;
+}
+
 export interface ClosedTrade {
   mint: string;
   symbol: string;
@@ -187,4 +206,5 @@ export interface ClosedTrade {
   holdTimeSeriesJson?: string;
   entryMarketCapUsd?: number;
   exitPriceUsd?: number;
+  entrySignals?: EntrySignals;
 }

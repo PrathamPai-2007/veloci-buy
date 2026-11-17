@@ -62,6 +62,7 @@ export class TestConfigBuilder {
       liveTradingEnabled: false,
       closePositionsOnShutdown: true,
       slippageBps: 500,
+      paperFrictionBps: 150,
       takeProfitMultiples: [1.15, 1.75],
       takeProfitMultiplesHigh: [1.24, 2.0],
       takeProfitFractions: [0.75, 0.6],

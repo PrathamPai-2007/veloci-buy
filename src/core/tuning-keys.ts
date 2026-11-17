@@ -14,6 +14,7 @@ export const TUNING_KEYS = [
   'discoveryMeteoraEnabled',
   'discoveryWsDebounceMs',
   'slippageBps',
+  'paperFrictionBps',
   'maxConcurrentAudits',
   'scanParallelismLight',
   'scanParallelismHeavy',
