@@ -44,14 +44,29 @@ export function calculateDrawdown(
 }
 
 /**
- * Resolves the current SOL balance in lamports. Paper mode reads it from state; live mode reads
- * the real wallet balance (fixing the old hard-coded 0 that made any live peak look like a 100%
- * drawdown). Returns null on a transient live RPC failure so the breaker can skip that cycle.
+ * Cost basis (lamports) of SOL currently tied up in open positions. Counted as equity so a fresh
+ * buy, which only moves SOL from cash into a position, is not read as a loss by the drawdown
+ * breaker. Cost basis, not mark-to-market: the loss registers when the position closes.
+ */
+function openPositionCostLamports(ctx: Context): bigint {
+  let sol = 0;
+  for (const p of ctx.state.positions.values()) {
+    sol += p.remainingCostSol ?? Number(p.initialBuyAmountSol ?? 0);
+  }
+  return BigInt(Math.round(sol * 1e9));
+}
+
+/**
+ * Resolves current equity in lamports: SOL balance plus the cost basis of open positions. Paper
+ * mode reads the balance from state; live mode reads the real wallet balance (fixing the old
+ * hard-coded 0 that made any live peak look like a 100% drawdown). Returns null on a transient
+ * live RPC failure so the breaker can skip that cycle.
  */
 export async function getCurrentBalanceLamports(ctx: Context): Promise<bigint | null> {
-  if (ctx.config.paperTrading) return BigInt(ctx.state.paperSolBalanceLamports || '0');
+  const held = openPositionCostLamports(ctx);
+  if (ctx.config.paperTrading) return BigInt(ctx.state.paperSolBalanceLamports || '0') + held;
   try {
-    return await getSolBalance(ctx);
+    return (await getSolBalance(ctx)) + held;
   } catch {
     return null;
   }

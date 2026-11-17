@@ -166,3 +166,11 @@ test('portfolio getAdjustedBuySize scales buy size on loss streak', () => {
   const size3 = getAdjustedBuySize(ctx, baseSize);
   assert.equal(size3, baseSize / 2n);
 });
+
+test('portfolio drawdown breaker counts SOL held in open positions as equity', async () => {
+  const ctx = createCtx({ paperTrading: true, maxDailyDrawdownPct: 0.3 });
+  ctx.state.peakSessionSolBalanceLamports = '1000000000';
+  ctx.state.paperSolBalanceLamports = '600000000'; // cash down 40%...
+  ctx.state.positions.set('MintA', { mint: 'MintA', remainingCostSol: 0.3 } as any); // ...0.3 SOL is in a position
+  assert.deepEqual(await evaluateDrawdownBreaker(ctx), { blocked: false }); // equity 0.9 SOL = 10% down
+});
