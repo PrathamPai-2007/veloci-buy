@@ -585,17 +585,11 @@ export async function evaluateSinglePosition(
           console: decision.level === 'warn',
         });
       }
-      // adaptiveTpMidpointGuard execution price correction
-      const execPrice =
-        decision.reason === 'adaptive-tp-exit'
-          ? pos.entryPriceUsd * (1 + 0.5 * (multiples[pos.targetsHit!]! - 1))
-          : pUsd;
-
       const exitResult = await monitorService.executePositionExit(
         ctx,
         pos,
         balance,
-        execPrice,
+        pUsd,
         decision.sellRaw ?? balance.rawAmount,
         decision.reason
       );
