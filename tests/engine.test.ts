@@ -480,6 +480,33 @@ test('engine flags sell pressure when rolling buy counts decrease', async () => 
   assert.ok(evaluation.rejectionReasons.some((reason) => reason.code === 'high-sell-pressure'));
 });
 
+test('engine holds sell-heavy tapes for recheck and ignores tiny tapes', async () => {
+  const ctx = createCtx();
+  const base: TokenMetadata = {
+    id: 'SellHeavyMint',
+    symbol: 'SH',
+    name: 'Pepe Sell Heavy',
+    decimals: 9,
+    usdPrice: 1,
+    liquidity: 10_000,
+    holderCount: 50,
+    organicScore: 10,
+    stats5m: { numBuys: 20, numSells: 15 },
+    firstPool: { createdAt: new Date(Date.now() - 60_000).toISOString() },
+  };
+  const code = (e: { rejectionReasons: { code: string; recheckEligible: boolean }[] }) =>
+    e.rejectionReasons.find((r) => r.code === 'sell-heavy-tape');
+
+  assert.deepEqual(code(await engine.evaluateCandidate(ctx, base)), {
+    code: 'sell-heavy-tape',
+    recheckEligible: true,
+  });
+  const tiny = { ...base, id: 'TinyTape', stats5m: { numBuys: 3, numSells: 3 } };
+  assert.equal(code(await engine.evaluateCandidate(ctx, tiny)), undefined);
+  const healthy = { ...base, id: 'Healthy', stats5m: { numBuys: 40, numSells: 10 } };
+  assert.equal(code(await engine.evaluateCandidate(ctx, healthy)), undefined);
+});
+
 test('engine sanitizes historical price points before volatility and momentum filters', async () => {
   const ctx = createCtx({ earlyPerformanceGuardSeconds: 1 });
   const now = Date.now();

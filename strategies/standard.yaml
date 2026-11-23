@@ -90,6 +90,7 @@ maxLiquidityDrawdownPct: 15
 maxSurvivalGrowthPct: 450
 minAccelerationFactor: 0.3
 maxSellPressureIncreasePct: 110
+maxEntrySellBuyRatio: 0.6 # reject while 5m sells/buys exceeds this (needs >= 10 trades)
 maxRecheckAttempts: 2
 recheckPriceDropPct: 15
 borderlineRecheckEnabled: true

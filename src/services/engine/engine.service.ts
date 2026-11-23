@@ -303,6 +303,17 @@ export async function evaluateCandidate(
     }
   }
 
+  // Distribution guard: a sell-heavy 5m tape means early holders are unloading into new buyers.
+  // In 88 labelled trades the top sell/buy tercile (>0.61) won 1 of 30 and lost the most.
+  // ponytail: fixed 10-trade minimum so a 1-sell/1-buy tape can't trip it; make it config if it needs tuning.
+  if (buys5m + sells5m >= 10 && sells5m / Math.max(1, buys5m) > ctx.config.maxEntrySellBuyRatio) {
+    addBlocker(
+      `Sell-heavy tape: 5m sells/buys ${(sells5m / Math.max(1, buys5m)).toFixed(2)} > ${ctx.config.maxEntrySellBuyRatio}.`,
+      'sell-heavy-tape',
+      true
+    );
+  }
+
   // A mint caught by ws-mint-init at creation has an empty bonding curve: price/liquidity/buys
   // all zero. That is "not born yet", not "dead" — recheck it as the curve fills rather than
   // hard-rejecting (which blacklists it via trackMint and removes it from discovery forever).

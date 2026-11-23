@@ -195,6 +195,7 @@ export interface Config {
   maxSurvivalGrowthPct: number;
   minAccelerationFactor: number;
   maxSellPressureIncreasePct: number;
+  maxEntrySellBuyRatio: number;
   priorityFeeBaseMicroLamports: number;
   priorityFeeMaxMicroLamports: number;
   priorityFeePanicMultiplier: number;
