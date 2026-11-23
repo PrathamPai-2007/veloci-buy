@@ -199,3 +199,23 @@ test('engine: hot tape order flow raises the entry score over a quiet tape', asy
   assert.ok(hot.notes.some((n) => n.startsWith('[Tape]')));
   marketTapeManager.clear();
 });
+
+test('engine: too few unique buyers on the tape is a recheckable rejection', async () => {
+  _resetLaunchRegistryForTest();
+  marketTapeManager.clear();
+  const ctx = createCtx({ minEntryUniqueBuyers: 3 });
+  const now = Date.now();
+  const code = (r: Awaited<ReturnType<typeof engine.evaluateCandidate>>) =>
+    r.rejectionReasons.find((x) => x.code === 'few-buyers');
+
+  marketTapeManager.recordTick('Thin', 'buy', 1, now - 3000, 'a');
+  marketTapeManager.recordTick('Thin', 'buy', 1, now - 2000, 'b');
+  assert.deepEqual(code(await engine.evaluateCandidate(ctx, plainToken('Thin'))), {
+    code: 'few-buyers',
+    recheckEligible: true,
+  });
+
+  for (const w of ['a', 'b', 'c']) marketTapeManager.recordTick('Crowd', 'buy', 1, now - 1000, w);
+  assert.equal(code(await engine.evaluateCandidate(ctx, plainToken('Crowd'))), undefined);
+  marketTapeManager.clear();
+});

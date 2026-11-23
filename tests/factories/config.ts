@@ -105,6 +105,7 @@ export class TestConfigBuilder {
       maxPriceDumpPct: 20,
       maxSellPressureIncreasePct: 100,
       maxEntrySellBuyRatio: 0.6,
+      minEntryUniqueBuyers: 0,
       minCandidateScore: 60,
       reentryDipPct: 15,
       reentryBreakoutPct: 20,

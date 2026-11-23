@@ -133,6 +133,7 @@ export const TUNING_KEYS = [
   'minAccelerationFactor',
   'maxSellPressureIncreasePct',
   'maxEntrySellBuyRatio',
+  'minEntryUniqueBuyers',
   'priorityFeeBaseMicroLamports',
   'priorityFeeMaxMicroLamports',
   'priorityFeePanicMultiplier',

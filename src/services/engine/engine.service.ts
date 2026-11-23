@@ -184,6 +184,14 @@ export async function evaluateCandidate(
   if (tapeSignals.creatorSold) {
     addBlocker('Creator wallet has sold this token.', 'creator-sold', false);
   }
+  // Thin crowds rug on one sell: TOGI (9 buyers) dumped, F (127) ran. Recheck: the crowd can grow.
+  if (tapeSignals.uniqueBuyers < ctx.config.minEntryUniqueBuyers) {
+    addBlocker(
+      `Too few buyers: ${tapeSignals.uniqueBuyers} unique in ${TAPE_SIGNALS.windowSeconds}s (need ${ctx.config.minEntryUniqueBuyers}).`,
+      'few-buyers',
+      true
+    );
+  }
   if (copycat) notes.push('Copycat: name+symbol already used by an earlier launch.');
 
   // Reject tokens explicitly launched on a non-pump.fun platform (e.g. Raydium graduates).

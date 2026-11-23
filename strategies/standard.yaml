@@ -89,6 +89,7 @@ maxLiquidityDrawdownPct: 15
 maxSurvivalGrowthPct: 450
 minAccelerationFactor: 0.3
 maxSellPressureIncreasePct: 110
+minEntryUniqueBuyers: 25 # distinct buying wallets on the trailing tape window
 maxEntrySellBuyRatio: 0.6 # reject while 5m sells/buys exceeds this (needs >= 10 trades)
 maxRecheckAttempts: 2
 recheckPriceDropPct: 15
@@ -151,7 +152,7 @@ holdDurationHighConfidenceMinutes: 30
 minHoldTimeSeconds: 1
 moonBagFraction: 0.1
 moonBagTrailingDrawdownPct: 0.3
-performanceCheckSeconds: 240
+performanceCheckSeconds: 90
 performanceMinMomentum: 1.05
 
 # --- Stops ---
