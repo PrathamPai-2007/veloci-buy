@@ -18,7 +18,9 @@ test('buildEntrySignals snapshots holders, tape and age at entry', () => {
       creator: 'walletC',
       firstPool: { createdAt: new Date(now - 40_000).toISOString() },
     } as never,
-    { mintSignals: { top1Share: 0.2, top3Share: 0.3, top5Share: 0.4, holdersKnown: true } } as never,
+    {
+      mintSignals: { top1Share: 0.2, top3Share: 0.3, top5Share: 0.4, holdersKnown: true },
+    } as never,
     now
   );
   assert.equal(sig.ageSeconds, 40);
