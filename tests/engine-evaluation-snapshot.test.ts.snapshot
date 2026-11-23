@@ -1,24 +1,10 @@
 exports[`snapshot evaluateCandidate: buying-the-top rejection 1`] = `
 {
-  "adjustedThresholds": {
-    "minBuys5m": 0.75,
-    "minHolderCount": 2.8,
-    "minLiquidityUsd": 562.5,
-    "minPoolAgeSeconds": 5
-  },
   "approved": false,
   "blockers": [
     "Buying the top detected: Growth since start is 125.0% and price is near ATH. Waiting for pullback."
   ],
   "candidateScore": 95,
-  "launchpadProfile": {
-    "buysMultiplier": 0.75,
-    "holderMultiplier": 0.7,
-    "liquidityMultiplier": 0.75,
-    "minPoolAgeSeconds": 5,
-    "name": "pump.fun",
-    "scoreBonus": 10
-  },
   "notes": [],
   "rejectionReasons": [
     {
@@ -52,23 +38,9 @@ exports[`snapshot evaluateCandidate: buying-the-top rejection 1`] = `
 
 exports[`snapshot evaluateCandidate: low entry score rejection 1`] = `
 {
-  "adjustedThresholds": {
-    "minBuys5m": 0.75,
-    "minHolderCount": 2.8,
-    "minLiquidityUsd": 562.5,
-    "minPoolAgeSeconds": 5
-  },
   "approved": true,
   "blockers": [],
   "candidateScore": 95,
-  "launchpadProfile": {
-    "buysMultiplier": 0.75,
-    "holderMultiplier": 0.7,
-    "liquidityMultiplier": 0.75,
-    "minPoolAgeSeconds": 5,
-    "name": "pump.fun",
-    "scoreBonus": 10
-  },
   "notes": [],
   "rejectionReasons": [],
   "token": {
@@ -97,23 +69,9 @@ exports[`snapshot evaluateCandidate: low entry score rejection 1`] = `
 
 exports[`snapshot evaluateCandidate: standard approval (pump.fun) 1`] = `
 {
-  "adjustedThresholds": {
-    "minBuys5m": 0.75,
-    "minHolderCount": 2.8,
-    "minLiquidityUsd": 562.5,
-    "minPoolAgeSeconds": 5
-  },
   "approved": true,
   "blockers": [],
   "candidateScore": 95,
-  "launchpadProfile": {
-    "buysMultiplier": 0.75,
-    "holderMultiplier": 0.7,
-    "liquidityMultiplier": 0.75,
-    "minPoolAgeSeconds": 5,
-    "name": "pump.fun",
-    "scoreBonus": 10
-  },
   "notes": [],
   "rejectionReasons": [],
   "token": {
@@ -142,25 +100,11 @@ exports[`snapshot evaluateCandidate: standard approval (pump.fun) 1`] = `
 
 exports[`snapshot evaluateCandidate: trending approval with relaxed thresholds 1`] = `
 {
-  "adjustedThresholds": {
-    "minBuys5m": 1,
-    "minHolderCount": 4,
-    "minLiquidityUsd": 750,
-    "minPoolAgeSeconds": 10
-  },
   "approved": false,
   "blockers": [
     "Non-pump.fun launchpad: raydium"
   ],
-  "candidateScore": 93,
-  "launchpadProfile": {
-    "buysMultiplier": 1,
-    "holderMultiplier": 1,
-    "liquidityMultiplier": 1,
-    "minPoolAgeSeconds": 10,
-    "name": "raydium",
-    "scoreBonus": 8
-  },
+  "candidateScore": 95,
   "notes": [],
   "rejectionReasons": [
     {

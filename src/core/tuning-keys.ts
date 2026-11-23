@@ -72,7 +72,6 @@ export const TUNING_KEYS = [
   'survivalDelayThresholdHigh',
   'survivalDelayThresholdVeryHigh',
   'finalAuditSeconds',
-  'minSurvivalMomentum',
   'minBreakoutMultiplier',
   'maxPriceDumpPct',
   'maxLiquidityDrawdownPct',
@@ -162,9 +161,6 @@ export const TUNING_KEYS = [
   'kellyEnabled',
   'maxKellyFraction',
   'kellyMinTrades',
-  'minCandidateScoreFloor',
-  'tradeStarvationMinutes',
-  'starvationRelaxStep',
   'enableLocalRouting',
 ] as const satisfies readonly (keyof Config)[];
 

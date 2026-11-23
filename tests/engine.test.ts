@@ -98,7 +98,7 @@ test('engine relaxes the parabolic-growth guard for trending coins only', async 
   assert.ok(!trending.rejectionReasons.some((r) => r.code === 'parabolic-growth'));
 });
 
-test('engine GMI adjusts aggression correctly', async () => {
+test('entry score ignores GMI, launchpad tag and liquidity depth', async () => {
   const config = createTestConfig({
     minCandidateScore: 70,
     memeKeywords: ['ape'],
@@ -113,16 +113,13 @@ test('engine GMI adjusts aggression correctly', async () => {
   });
   const state = createState({ launchHistory: [], retiredMints: new Map() });
   const ctx = { config, state } as unknown as Context;
-
-  // 1. GMI Neutral (no history)
-  (ctx as any).calculateGMI = () => 0.5;
   const token: TokenMetadata = {
     id: 'test',
     symbol: 'APE',
     name: 'ape',
     decimals: 9,
     usdPrice: 1,
-    liquidity: 50_000, // Ratio > 5 relative to minLiquidityUsd=750
+    liquidity: 50_000,
     holderCount: 1000,
     stats5m: { numBuys: 100, numSells: 10 },
     website: 'http',
@@ -131,213 +128,39 @@ test('engine GMI adjusts aggression correctly', async () => {
     launchpad: 'pump.fun',
     firstPool: { createdAt: new Date(Date.now() - 30_000).toISOString() },
   };
+  const thin = { ...token, liquidity: config.minLiquidityUsd, launchpad: undefined };
 
-  // GMI Neutral: Target 70. Score 90 should PASS (50 base + 10 pump.fun bonus + 15 social + 10 liq + 5 holders).
-  let result = await engine.evaluateCandidate(ctx, token);
-  assert.strictEqual(result.candidateScore, 90);
-  assert.strictEqual(result.approved, true);
-
-  // GMI Low (< 0.3): Target 70 + 35 = 105. Score 90. Score gate is deferred to heavy audit,
-  // so cheap depth still passes — this validates candidateScore computation only.
-  (ctx as any).calculateGMI = () => 0.2;
-  config.minCandidateScore = 105;
-  result = await engine.evaluateCandidate(ctx, token);
-  assert.strictEqual(result.candidateScore, 90);
-  assert.strictEqual(result.approved, true);
-
-  // GMI High (> 0.7): Target 70 - 5 = 65. Score 70 should PASS.
-  (ctx as any).calculateGMI = () => 0.8;
-  config.minCandidateScore = 70;
-  const lowLiqToken: TokenMetadata = {
-    ...token,
-    liquidity: config.minLiquidityUsd,
-    launchpad: undefined, // unknown launchpad -> scoreBonus 0
-    firstPool: { createdAt: new Date(Date.now() - 30_000).toISOString() },
-  };
-  result = await engine.evaluateCandidate(ctx, lowLiqToken);
-  assert.strictEqual(result.candidateScore, 70);
-  assert.strictEqual(result.approved, true);
+  // 70 base + 15 social + 5 holders, whatever the market regime or tagging.
+  for (const gmi of [0.2, 0.5, 0.8]) {
+    (ctx as any).calculateGMI = () => gmi;
+    for (const t of [token, thin]) {
+      const result = await engine.evaluateCandidate(ctx, t);
+      assert.strictEqual(result.candidateScore, 90);
+      assert.strictEqual(result.approved, true);
+    }
+  }
 });
 
-test('engine computes score bonuses from socials and liquidity tiers', () => {
-  const thresholds = {
-    minLiquidityUsd: 1000,
-    minHolderCount: 0,
-    minBuys5m: 0,
-    minPoolAgeSeconds: 0,
-  };
-  const profile = {
-    scoreBonus: 10,
-    liquidityMultiplier: 1,
-    holderMultiplier: 1,
-    buysMultiplier: 1,
-    minPoolAgeSeconds: 0,
-    name: 'test',
-  };
+test('engine computes candidate score components', () => {
+  const score = (t: Partial<TokenMetadata>, socials = 0) =>
+    engine.computeCandidateScore(t as TokenMetadata, socials);
 
+  assert.equal(score({ liquidity: 1000 }), 70);
+  assert.equal(score({ liquidity: 60_000 }), 70); // depth is a gate, not a score term
+  assert.equal(score({ organicScore: '15' as unknown as number }), 85);
+  assert.equal(score({}, 3), 85); // +15 social links
+  assert.equal(score({ isVerified: true }), 75);
+  assert.equal(score({ holderCount: 10 }), 75);
+  assert.equal(score({ buyPressure: 21, sellPressure: 10 }), 75); // graded, clamped at 2x
+  assert.equal(score({ audit: { isSus: true } } as Partial<TokenMetadata>), 65);
+  assert.equal(score({ organicScore: -100, audit: { isSus: true } } as Partial<TokenMetadata>), 45);
   assert.equal(
-    engine.computeCandidateScore({ liquidity: 1000 } as TokenMetadata, profile, thresholds, 0),
-    60 // 50 base + 10 profile.scoreBonus
-  );
-  assert.equal(
-    engine.computeCandidateScore(
-      { liquidity: 1000, organicScore: '15' } as TokenMetadata,
-      profile,
-      thresholds,
-      0
+    score(
+      { isVerified: true, organicScore: 20, holderCount: 10, buyPressure: 21, sellPressure: 10 },
+      3
     ),
-    75 // 60 + 15 organic
+    100
   );
-  assert.equal(
-    engine.computeCandidateScore({ liquidity: 1000 } as TokenMetadata, profile, thresholds, 3),
-    75 // 60 + 15 social links
-  );
-  assert.equal(
-    engine.computeCandidateScore({ liquidity: 6000 } as TokenMetadata, profile, thresholds, 0),
-    70 // 60 + 10 high liquidity ratio
-  );
-});
-
-test('engine computes new scoring overhaul logic (verification, launchpad, holders, buy pressure, audit, clamp)', () => {
-  const thresholds = {
-    minLiquidityUsd: 1000,
-    minHolderCount: 5,
-    minBuys5m: 0,
-    minPoolAgeSeconds: 0,
-  };
-  const profile = {
-    scoreBonus: 10,
-    liquidityMultiplier: 1,
-    holderMultiplier: 1,
-    buysMultiplier: 1,
-    minPoolAgeSeconds: 0,
-    name: 'pump.fun',
-  };
-
-  // Base case: no token-level bonuses -> 50 + profile.scoreBonus(10) = 60
-  let score = engine.computeCandidateScore(
-    { liquidity: 1000 } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 60);
-
-  // profile.scoreBonus now covers launchpad trust; token.launchpad field itself adds nothing
-  score = engine.computeCandidateScore(
-    { liquidity: 1000, launchpad: 'pump.fun' } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 60); // 50 base + 10 profile bonus (token.launchpad no longer adds separately)
-
-  // +5 for isVerified
-  score = engine.computeCandidateScore(
-    { liquidity: 1000, isVerified: true } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 65); // 60 + 5 verified
-
-  // +5 for holderCount >= 10
-  score = engine.computeCandidateScore(
-    { liquidity: 1000, holderCount: 10 } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 65); // 60 + 5 holder
-
-  // graded buy pressure: ratio 2.1x → clamped to 1 → *5 = +5
-  score = engine.computeCandidateScore(
-    { liquidity: 1000, buyPressure: 21, sellPressure: 10 } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 65); // 60 + 5 buy pressure
-
-  // -5 for suspicious audit
-  score = engine.computeCandidateScore(
-    { liquidity: 1000, audit: { isSus: true } } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 55); // 60 - 5 sus audit
-
-  // Max clamp: 50 + profileBonus(10) + verified(5) + social(15) + organic(20) + highLiq(10) + holder(5) + buyPressure(5) = 120 -> clamped 100
-  score = engine.computeCandidateScore(
-    {
-      liquidity: 6000,
-      launchpad: 'pump.fun',
-      isVerified: true,
-      organicScore: 20,
-      holderCount: 10,
-      buyPressure: 21,
-      sellPressure: 10,
-    } as TokenMetadata,
-    profile,
-    thresholds,
-    3
-  );
-  assert.equal(score, 100);
-
-  // Min clamp: 50 + profileBonus(10) - organic(-20 clamped) - sus(5) = 35 (above 0, no clamp needed)
-  score = engine.computeCandidateScore(
-    {
-      liquidity: 1000,
-      organicScore: -100,
-      audit: { isSus: true },
-    } as TokenMetadata,
-    profile,
-    thresholds,
-    0
-  );
-  assert.equal(score, 35); // 50 + 10 - 20 (clamped organic) - 5 (sus audit) = 35
-});
-
-test('engine treats non-string launchpads as unknown profiles', () => {
-  const unknownProfile = {
-    name: 'unknown',
-    scoreBonus: 0,
-    liquidityMultiplier: 1,
-    holderMultiplier: 1,
-    buysMultiplier: 1,
-    minPoolAgeSeconds: 0,
-  };
-  assert.deepEqual(engine.getLaunchpadProfile('pump.fun'), {
-    ...unknownProfile,
-    name: 'pump.fun',
-    scoreBonus: 10,
-    liquidityMultiplier: 0.75,
-    holderMultiplier: 0.7,
-    buysMultiplier: 0.75,
-    minPoolAgeSeconds: 5,
-  });
-  // The original test might have expected unknown for non-existent ones.
-  assert.deepEqual(engine.getLaunchpadProfile(123 as any), unknownProfile);
-});
-
-test('engine applies launchpad-specific threshold multipliers', () => {
-  const ctx = {
-    config: { minLiquidityUsd: 1000, minHolderCount: 100, minBuys5m: 10, minPoolAgeSeconds: 30 },
-  } as unknown as Context;
-  const profile = {
-    name: 'pump.fun',
-    scoreBonus: 10,
-    liquidityMultiplier: 0.75,
-    holderMultiplier: 0.7,
-    buysMultiplier: 0.75,
-    minPoolAgeSeconds: 5,
-  };
-
-  const thresholds = engine.getLaunchpadAdjustedThresholds(ctx, profile);
-  assert.equal(thresholds.minLiquidityUsd, 750);
-  assert.equal(thresholds.minHolderCount, 70);
-  assert.equal(thresholds.minBuys5m, 7.5);
 });
 
 test('engine identifies memecoin candidates from name, symbol, fdv, and launchpad', () => {
@@ -762,18 +585,21 @@ test('engine rejects candidate with zero buys/sells (zero volume)', async () => 
   assert.ok(result.blockers.some((b) => b.includes('5m buys')));
 });
 
-test('engine will not buy below the liquidity-exit floor', async () => {
-  const ctx = createCtx({ minLiquidityUsd: 300, liquidityCollapseThresholdUsd: 750 });
-  const token: TokenMetadata = {
-    id: 'ThinMint',
-    symbol: 'THIN',
-    name: 'Thin',
-    decimals: 6,
-    usdPrice: 1,
-    liquidity: 428,
-  } as TokenMetadata;
-  const res = await engine.evaluateCandidate(ctx, token);
-  assert.ok(res.rejectionReasons.some((r) => r.code === 'low-liquidity'));
+test('entry liquidity floor is minLiquidityUsd exactly', async () => {
+  const ctx = createCtx({ minLiquidityUsd: 2500, liquidityCollapseThresholdUsd: 320 });
+  const mk = (liquidity: number) =>
+    ({
+      id: `L${liquidity}`,
+      symbol: 'T',
+      name: 'T',
+      decimals: 6,
+      usdPrice: 1,
+      liquidity,
+    }) as TokenMetadata;
+  const low = (r: Awaited<ReturnType<typeof engine.evaluateCandidate>>) =>
+    r.rejectionReasons.some((x) => x.code === 'low-liquidity');
+  assert.equal(low(await engine.evaluateCandidate(ctx, mk(2499))), true);
+  assert.equal(low(await engine.evaluateCandidate(ctx, mk(2500))), false);
 });
 
 test('low liquidity is recheck-eligible for a young curve but final for an old one', async () => {

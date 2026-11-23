@@ -1,5 +1,3 @@
-import { LaunchpadProfile } from '../types/index.js';
-
 /**
  * The mint address for native SOL on Solana.
  */
@@ -55,47 +53,6 @@ export const DEFAULT_MEME_KEYWORDS = [
   'sol',
   'wojak',
 ];
-
-/**
- * Scoring and liquidity profiles for various launchpads and AMMs.
- */
-export const DEFAULT_LAUNCHPAD_PROFILES: Record<string, LaunchpadProfile> = {
-  'pump.fun': {
-    scoreBonus: 10,
-    liquidityMultiplier: 0.75,
-    holderMultiplier: 0.7,
-    buysMultiplier: 0.75,
-    minPoolAgeSeconds: 5,
-  },
-  'bags.fun': {
-    scoreBonus: 6,
-    liquidityMultiplier: 0.7,
-    holderMultiplier: 0.6,
-    buysMultiplier: 0.5,
-    minPoolAgeSeconds: 5,
-  },
-  raydium: {
-    scoreBonus: 8,
-    liquidityMultiplier: 1,
-    holderMultiplier: 1,
-    buysMultiplier: 1,
-    minPoolAgeSeconds: 10,
-  },
-  meteora: {
-    scoreBonus: 7,
-    liquidityMultiplier: 1,
-    holderMultiplier: 1,
-    buysMultiplier: 1,
-    minPoolAgeSeconds: 10,
-  },
-  moonshot: {
-    scoreBonus: 9,
-    liquidityMultiplier: 0.8,
-    holderMultiplier: 0.75,
-    buysMultiplier: 0.75,
-    minPoolAgeSeconds: 5,
-  },
-};
 
 /**
  * Program IDs for SPL Token and Token-2022 programs.

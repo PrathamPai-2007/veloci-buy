@@ -10,15 +10,12 @@ import { ghostTrader } from '#ml/ghost-trader.js';
 import {
   finiteNumber,
   getValidPriceHistory,
-  getLaunchpadProfile,
-  getLaunchpadAdjustedThresholds,
   computeCandidateScore,
   computeMomentumScore,
   looksLikeMemecoin,
   countSocialLinks,
   isReducedHistoricalSnapshot,
   isSlightlyBelowThreshold,
-  computeEffectiveMinScore,
   applyMomentumFilters,
   maybeWarnClockSkew,
   CLOCK_SKEW_TOLERANCE_SECONDS,
@@ -27,21 +24,15 @@ import {
 // Re-export everything from scoring so existing imports keep working unchanged.
 export {
   finiteNumber,
-  getLaunchpadProfile,
-  getLaunchpadAdjustedThresholds,
   computeCandidateScore,
   computeMomentumScore,
   looksLikeMemecoin,
   countSocialLinks,
   isReducedHistoricalSnapshot,
   isSlightlyBelowThreshold,
-  computeEffectiveMinScore,
 } from './scoring.js';
 
-const SURVIVAL_MOMENTUM_PASS_BAND_PCT = 2;
-const MARKET_CAP_PASS_BAND_PCT = 4;
 const ZERO_BUYS_YOUNG_SECONDS = 120;
-const LIQUIDITY_EXIT_MARGIN = 1.25;
 
 import { applyMlGate } from './evaluators/ml-gate-stage.js';
 
@@ -145,9 +136,7 @@ export async function evaluateCandidate(
     : ctx.config.maxTokenAccountTop5Pct;
 
   const validPriceHistory = getValidPriceHistory(priceHistory);
-  const launchpadProfile = getLaunchpadProfile(token.launchpad);
-  const thresholds = getLaunchpadAdjustedThresholds(ctx, launchpadProfile);
-  let entryScore = computeCandidateScore(token, launchpadProfile, thresholds, socialLinks);
+  let entryScore = computeCandidateScore(token, socialLinks);
   if (ctx.config.momentumScoringEnabled) {
     const momentumDelta = computeMomentumScore(
       token,
@@ -199,7 +188,7 @@ export async function evaluateCandidate(
 
   // Reject tokens explicitly launched on a non-pump.fun platform (e.g. Raydium graduates).
   // Allow null/unknown — fresh mints often arrive untagged before Jupiter indexes their launchpad.
-  // Normalize casing the same way getLaunchpadProfile does, so a capitalized 'Pump.fun' (which can
+  // Normalize casing so a capitalized 'Pump.fun' (which can
   // still reach here via the id-endsWith('pump') branch of the scan filter) is not wrongly blocked.
   const normalizedLaunchpad =
     typeof token.launchpad === 'string' ? token.launchpad.trim().toLowerCase() : token.launchpad;
@@ -232,12 +221,6 @@ export async function evaluateCandidate(
       addBlocker(
         `Parabolic growth detected: ${growthPct.toFixed(1)}% exceeds limit of ${effMaxSurvivalGrowthPct}%.`,
         'parabolic-growth'
-      );
-    }
-    if (momentum < ctx.config.minSurvivalMomentum * (1 - SURVIVAL_MOMENTUM_PASS_BAND_PCT / 100)) {
-      addBlocker(
-        `Survival momentum failed: ${momentum.toFixed(3)}x is below required ${ctx.config.minSurvivalMomentum}x (pass band ${SURVIVAL_MOMENTUM_PASS_BAND_PCT}%).`,
-        'low-survival-momentum'
       );
     }
     if (momentum < ctx.config.minBreakoutMultiplier) {
@@ -332,12 +315,8 @@ export async function evaluateCandidate(
     addBlocker('No price.', 'missing-price', isUnbornMint || isNonPump);
   }
 
-  // Never buy a position the monitor would liquidity-exit on its first tick: the entry floor must
-  // sit above the collapse threshold (with margin, since thin curves move between the two reads).
-  const minLiquidityUsd = Math.max(
-    thresholds.minLiquidityUsd,
-    ctx.config.liquidityCollapseThresholdUsd * LIQUIDITY_EXIT_MARGIN
-  );
+  // Config validation guarantees this sits above liquidityCollapseThresholdUsd.
+  const minLiquidityUsd = ctx.config.minLiquidityUsd;
   if (!Number.isFinite(liquidity) || liquidity < minLiquidityUsd) {
     notes.push(diagContext);
     addBlocker(
@@ -355,9 +334,9 @@ export async function evaluateCandidate(
   // Minimum market-cap floor (FDV is the proxy: pump.fun supply is ~fixed). Only applied when
   // FDV is known (>0) so brand-new mints without market data aren't hard-rejected before it
   // arrives. Recheck-eligible: a coin below the floor can climb across it.
-  if (fdv > 0 && fdv < ctx.config.minMarketCapUsd * (1 - MARKET_CAP_PASS_BAND_PCT / 100)) {
+  if (fdv > 0 && fdv < ctx.config.minMarketCapUsd) {
     addBlocker(
-      `Market cap too low: ${formatUsd(fdv)} below floor ${formatUsd(ctx.config.minMarketCapUsd)} (pass band ${MARKET_CAP_PASS_BAND_PCT}%).`,
+      `Market cap too low: ${formatUsd(fdv)} below floor ${formatUsd(ctx.config.minMarketCapUsd)}.`,
       'low-market-cap',
       true
     );
@@ -386,7 +365,7 @@ export async function evaluateCandidate(
 
   // Age Checks
   if (ageSeconds != null) {
-    if (ageSeconds < thresholds.minPoolAgeSeconds) {
+    if (ageSeconds < ctx.config.minPoolAgeSeconds) {
       addBlocker(`Too new ${ageSeconds}s.`, 'too-new', true);
     }
     if (ageSeconds > ctx.config.maxCandidateAgeMinutes * 60) {
@@ -413,8 +392,6 @@ export async function evaluateCandidate(
       notes,
       candidateScore: entryScore,
       volatilityScaler,
-      launchpadProfile,
-      adjustedThresholds: thresholds,
       token,
     };
   }
@@ -431,8 +408,6 @@ export async function evaluateCandidate(
       notes,
       candidateScore: entryScore,
       volatilityScaler,
-      launchpadProfile,
-      adjustedThresholds: thresholds,
       token,
     };
     ghostTrader.notifyCandidate(cheapResult, 'cheap');
@@ -441,21 +416,21 @@ export async function evaluateCandidate(
 
   // Soft quality gates — heavy audit only, evaluated with full metadata context
   if (!reducedHistoricalSnapshot) {
-    if (!Number.isFinite(holderCount) || holderCount < thresholds.minHolderCount) {
+    if (!Number.isFinite(holderCount) || holderCount < ctx.config.minHolderCount) {
       addBlocker(
         `Low holders ${holderCount}.`,
         'low-holders',
-        isSlightlyBelowThreshold(ctx, holderCount, thresholds.minHolderCount)
+        isSlightlyBelowThreshold(ctx, holderCount, ctx.config.minHolderCount)
       );
     }
     if (!Number.isFinite(organicScore) || organicScore < ctx.config.minOrganicScore) {
       addBlocker(`Low organic score ${organicScore}.`, 'low-organic-score');
     }
-    if (buys5m < thresholds.minBuys5m) {
+    if (buys5m < ctx.config.minBuys5m) {
       addBlocker(
         `Low 5m buys ${buys5m}.`,
         'low-buys',
-        isSlightlyBelowThreshold(ctx, buys5m, thresholds.minBuys5m)
+        isSlightlyBelowThreshold(ctx, buys5m, ctx.config.minBuys5m)
       );
     }
   }
@@ -486,16 +461,12 @@ export async function evaluateCandidate(
 
   // Score gate — fires after soft gates so the score is evaluated with full metadata context
   if (!reducedHistoricalSnapshot) {
-    const { effective: adjustedMinScore, note } = computeEffectiveMinScore(
-      ctx,
-      ctx.config.minCandidateScore
-    );
-    if (note) notes.push(note);
-    if (entryScore < adjustedMinScore) {
+    const minScore = ctx.config.minCandidateScore;
+    if (entryScore < minScore) {
       addBlocker(
-        `Low entry score ${entryScore} (Target ${adjustedMinScore.toFixed(1)}).`,
+        `Low entry score ${entryScore} (Target ${minScore}).`,
         'entry-score-too-low',
-        isSlightlyBelowThreshold(ctx, entryScore, adjustedMinScore)
+        isSlightlyBelowThreshold(ctx, entryScore, minScore)
       );
     }
   }
@@ -508,8 +479,6 @@ export async function evaluateCandidate(
       notes,
       candidateScore: entryScore,
       volatilityScaler,
-      launchpadProfile,
-      adjustedThresholds: thresholds,
       token,
     };
   }
@@ -527,8 +496,6 @@ export async function evaluateCandidate(
       blockers,
       notes,
       volatilityScaler,
-      launchpadProfile,
-      adjustedThresholds: thresholds,
       token,
     };
   }
@@ -560,8 +527,6 @@ export async function evaluateCandidate(
     notes,
     candidateScore: entryScore,
     volatilityScaler,
-    launchpadProfile,
-    adjustedThresholds: thresholds,
     token,
     mintSignals,
     rugCheckSignals,

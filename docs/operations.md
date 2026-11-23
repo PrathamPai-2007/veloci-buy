@@ -117,7 +117,6 @@ lock, but a writer holding the lock delays persistence.
 
 - Check the `rej` counts and the rejection reasons in `scanned-memecoins.jsonl`.
 - Thresholds may be too strict for current market conditions.
-- Starvation relaxes the score gate automatically, but only down to `minCandidateScoreFloor`.
 
 **Buying paused**
 

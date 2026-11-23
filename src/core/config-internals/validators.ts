@@ -50,6 +50,10 @@ export function validateStartupConfig(config: Config): boolean {
     );
   }
 
+  // Otherwise the monitor would liquidity-exit a fresh buy on its first tick.
+  if (config.minLiquidityUsd <= config.liquidityCollapseThresholdUsd) {
+    errors.push('minLiquidityUsd must be greater than liquidityCollapseThresholdUsd.');
+  }
   if (!Number.isFinite(config.slippageBps) || config.slippageBps < 1 || config.slippageBps > 5000) {
     errors.push('slippageBps must be between 1 and 5000.');
   }

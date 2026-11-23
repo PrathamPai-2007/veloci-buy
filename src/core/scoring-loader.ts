@@ -19,8 +19,6 @@ const DEFAULT_SCORING: ScoringConfig = {
     socialLinkLow: 5,
     isVerified: 5,
     organicScoreClamp: 20,
-    liquidityRatioHigh: 10,
-    liquidityRatioLow: 5,
     holderCountHigh: 5,
     buyPressureBonus: 5,
     suspiciousAuditPenalty: 5,

@@ -9,7 +9,6 @@ import {
 } from '../core/utils.js';
 import { PUMP_FUN_PROGRAM_ID } from '../core/config.js';
 import { address, getProgramDerivedAddress, getAddressEncoder } from '@solana/addresses';
-import * as engine from './engine/engine.service.js';
 import * as trading from './trading/trading.service.js';
 import { Context, TokenMetadata } from '../types/index.js';
 import { localMarketState, priceHistoryEngine, marketDataProvider } from './market-state/index.js';
@@ -99,8 +98,7 @@ export async function fetchDirectMarketData(
     }
   }
 
-  const launchpad = engine.getLaunchpadProfile(effectiveLaunchpad || 'pump.fun');
-  if (launchpad.name !== 'pump.fun') return null;
+  if ((effectiveLaunchpad || 'pump.fun').trim().toLowerCase() !== 'pump.fun') return null;
 
   try {
     const programId = address(PUMP_FUN_PROGRAM_ID);

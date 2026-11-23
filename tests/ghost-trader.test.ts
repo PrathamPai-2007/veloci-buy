@@ -21,8 +21,6 @@ function makeEvalResult(
     notes: [],
     candidateScore: score,
     volatilityScaler: 1.0,
-    launchpadProfile: { name: 'pumpfun' },
-    adjustedThresholds: { minLiquidityUsd: 500 },
     token: {
       id: mint,
       symbol: mint.toUpperCase(),

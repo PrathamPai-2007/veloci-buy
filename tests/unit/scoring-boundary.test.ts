@@ -2,39 +2,19 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  computeCandidateScore,
-  computeMomentumScore,
-  computeEffectiveMinScore,
-} from '../../src/services/engine/scoring.js';
+import { computeCandidateScore, computeMomentumScore } from '../../src/services/engine/scoring.js';
 import { computeStandardDeviation, computeSpread } from '../../src/core/utils/math.js';
 import { computeTakeProfitSellAmount } from '../../src/services/monitor/exit-calculator.js';
 import { createTestToken } from '../factories/token.js';
-import { createCtx } from '../_test_helpers.js';
 
 test('computeCandidateScore handles normal, boundary, and extreme inputs', () => {
-  const profile = {
-    name: 'pump.fun',
-    scoreBonus: 10,
-    liquidityMultiplier: 1.0,
-    holderMultiplier: 1.0,
-    buysMultiplier: 1.0,
-    minPoolAgeSeconds: 0,
-  };
-  const thresholds = {
-    minLiquidityUsd: 1000,
-    minHolderCount: 10,
-    minBuys5m: 5,
-    minPoolAgeSeconds: 0,
-  };
-
   // Standard case
   const normalToken = createTestToken({
     liquidity: 5000,
     holderCount: 20,
     organicScore: 80,
   });
-  const scoreNormal = computeCandidateScore(normalToken, profile, thresholds, 2);
+  const scoreNormal = computeCandidateScore(normalToken, 2);
   assert.ok(
     scoreNormal >= 0 && scoreNormal <= 100,
     `Score should be bounded 0-100, got ${scoreNormal}`
@@ -46,7 +26,7 @@ test('computeCandidateScore handles normal, boundary, and extreme inputs', () =>
     holderCount: 0,
     organicScore: 0,
   });
-  const scoreZero = computeCandidateScore(zeroToken, profile, thresholds, 0);
+  const scoreZero = computeCandidateScore(zeroToken, 0);
   assert.ok(scoreZero >= 0 && scoreZero <= 100);
 
   // NaN / Infinity edge values
@@ -55,7 +35,7 @@ test('computeCandidateScore handles normal, boundary, and extreme inputs', () =>
     holderCount: Infinity as any,
     organicScore: -Infinity as any,
   });
-  const scoreNan = computeCandidateScore(nanToken, profile, thresholds, 0);
+  const scoreNan = computeCandidateScore(nanToken, 0);
   assert.ok(Number.isFinite(scoreNan), 'Score must always return a finite number');
 
   // Parametrized social links tests
@@ -66,7 +46,7 @@ test('computeCandidateScore handles normal, boundary, and extreme inputs', () =>
     { count: 10, expectedMin: 60 },
   ];
   for (const c of socialCases) {
-    const s = computeCandidateScore(normalToken, profile, thresholds, c.count);
+    const s = computeCandidateScore(normalToken, c.count);
     assert.ok(Number.isFinite(s));
   }
 });
@@ -88,21 +68,6 @@ test('computeMomentumScore handles momentum ratios and price history length', ()
 
   const score = computeMomentumScore(normalToken, validHistory, 0.001, 0.0015);
   assert.ok(Number.isFinite(score), 'Score should return a finite number for valid history');
-});
-
-test('computeEffectiveMinScore respects candidate score floor and GMI regime', () => {
-  const ctx = createCtx({
-    minCandidateScore: 70,
-    adaptiveFloorEnabled: true,
-    paperTrading: true,
-    minCandidateScoreFloor: 50,
-  });
-
-  ctx.state.lastBuyAt = Date.now() - 30 * 60_000; // 30 min ago
-
-  const { effective } = computeEffectiveMinScore(ctx, 70);
-  assert.ok(Number.isFinite(effective), 'Effective score must be a finite number');
-  assert.ok(effective <= 70, 'Adaptive score should relax or stay equal to base score');
 });
 
 test('math utilities boundary tests (computeStandardDeviation & computeSpread)', () => {

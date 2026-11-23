@@ -62,7 +62,7 @@ depths.
   `minPoolAgeSeconds`.
 - **Launchpad profile:** per-launchpad multipliers; pump.fun is the target.
 - **Survival behaviour:**
-  - Price movement: `minSurvivalMomentum`, `minBreakoutMultiplier`, `maxPriceDumpPct`,
+  - Price movement: `minBreakoutMultiplier`, `maxPriceDumpPct`,
     `maxSurvivalGrowthPct`.
   - Liquidity: `maxLiquidityDrawdownPct`.
   - Order flow: `maxSellPressureIncreasePct`, `minAccelerationFactor`,
@@ -81,8 +81,7 @@ depths.
     the tape has `minTrades` trades. A launch that reuses the name+symbol of an earlier launch
     this session loses `copycatPenalty` points, and a creator-wallet sale on the tape is a hard
     reject (`creator-sold`).
-  - The total must reach `minCandidateScore`. During trade starvation (`tradeStarvationMinutes`)
-    the gate relaxes by `starvationRelaxStep`, down to `minCandidateScoreFloor`.
+  - The total must reach `minCandidateScore`. The gate never moves on its own.
 
 ### Deep audit
 

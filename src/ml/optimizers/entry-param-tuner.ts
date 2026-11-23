@@ -12,17 +12,9 @@ export const ENTRY_PARAM_SPECS: ParamSpec[] = [
     integer: true,
   },
   { key: 'minCandidateScore', min: 55, max: 85, delta: 1, learningRate: 0.02, maxStep: 1 },
-  { key: 'minLiquidityUsd', min: 100, max: 2000, delta: 25, learningRate: 0.5, maxStep: 25 },
+  { key: 'minLiquidityUsd', min: 100, max: 10000, delta: 25, learningRate: 0.5, maxStep: 25 },
   { key: 'minOrganicScore', min: -10, max: 20, delta: 1, learningRate: 0.1, maxStep: 1 },
   { key: 'maxFdvToLiquidity', min: 0.5, max: 3.0, delta: 0.1, learningRate: 0.05, maxStep: 0.1 },
-  {
-    key: 'minSurvivalMomentum',
-    min: 1.0,
-    max: 1.5,
-    delta: 0.05,
-    learningRate: 0.02,
-    maxStep: 0.05,
-  },
   {
     key: 'minBreakoutMultiplier',
     min: 1.0,
@@ -40,7 +32,6 @@ export function extractCurrentEntryParams(config: Config): Record<string, number
     minLiquidityUsd: config.minLiquidityUsd,
     minOrganicScore: config.minOrganicScore,
     maxFdvToLiquidity: config.maxFdvToLiquidity,
-    minSurvivalMomentum: config.minSurvivalMomentum,
     minBreakoutMultiplier: config.minBreakoutMultiplier,
   };
 }
@@ -74,7 +65,6 @@ export function replayEntryNetPnl(
   const minLiq = params['minLiquidityUsd'] ?? 0;
   const minOrganic = params['minOrganicScore'] ?? -100;
   const maxFdvToLiq = params['maxFdvToLiquidity'] ?? 100;
-  const minSurvivalMom = params['minSurvivalMomentum'] ?? 0;
   const minBreakoutMom = params['minBreakoutMultiplier'] ?? 0;
 
   let total = 0;
@@ -87,7 +77,6 @@ export function replayEntryNetPnl(
     if (decoded.organicScore < minOrganic) continue;
     // maxFdvToLiquidity is fdv/liquidity/100 clamped 0..1 (features.ts:61). Guard scale.
     if (decoded.fdvToLiquidity > maxFdvToLiq) continue;
-    if (decoded.momentum < minSurvivalMom) continue;
     if (decoded.momentum < minBreakoutMom) continue;
     total += s.realizedPnlUsd;
   }

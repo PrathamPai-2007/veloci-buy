@@ -3,13 +3,8 @@
  * No ML, no side-effects — safe to import anywhere.
  */
 import { clamp } from '#core/utils.js';
-import {
-  DEFAULT_LAUNCHPAD_PROFILES,
-  SCORING_WEIGHTS,
-  MOMENTUM_FILTERS,
-  MOMENTUM_SCORING,
-} from '#core/config.js';
-import { Context, TokenMetadata, LaunchpadProfile, AdjustedThresholds } from '#types/index.js';
+import { SCORING_WEIGHTS, MOMENTUM_FILTERS, MOMENTUM_SCORING } from '#core/config.js';
+import { Context, TokenMetadata } from '#types/index.js';
 
 export interface PricePoint {
   price: number;
@@ -33,9 +28,6 @@ export function maybeWarnClockSkew(ctx: Context, ageSeconds: number): void {
     'warn'
   );
 }
-
-/** Epoch ms when this process started; the starvation clock's baseline before any buy. */
-export const SESSION_START = Date.now();
 
 export function calcPriceConsistency(points: { price: number }[], fallback = 0.5): number {
   if (!points || points.length < 2) return fallback;
@@ -75,65 +67,12 @@ export function getValidPriceHistory(priceHistory: unknown[]): PricePoint[] {
 }
 
 /**
- * Retrieves the profile for a given launchpad.
- */
-export function getLaunchpadProfile(launchpad: unknown): LaunchpadProfile & { name: string } {
-  const normalized =
-    typeof launchpad === 'string' && launchpad.trim() ? launchpad.trim().toLowerCase() : 'unknown';
-  const defaultProfiles: Record<string, LaunchpadProfile> = DEFAULT_LAUNCHPAD_PROFILES;
-  const profile = defaultProfiles[normalized];
-  if (!profile) {
-    return {
-      name: 'unknown',
-      scoreBonus: 0,
-      liquidityMultiplier: 1,
-      holderMultiplier: 1,
-      buysMultiplier: 1,
-      minPoolAgeSeconds: 0,
-    };
-  }
-  return { name: normalized, ...profile };
-}
-
-/**
- * Calculates adjusted audit thresholds based on the launchpad profile.
- */
-export function getLaunchpadAdjustedThresholds(
-  ctx: Context,
-  profile: LaunchpadProfile & { name: string }
-): AdjustedThresholds {
-  const defaults = {
-    minLiquidityUsd: ctx.config.minLiquidityUsd,
-    minHolderCount: ctx.config.minHolderCount,
-    minBuys5m: ctx.config.minBuys5m,
-    minPoolAgeSeconds: ctx.config.minPoolAgeSeconds,
-  };
-  if (!profile || profile.name === 'unknown') return defaults;
-  return {
-    minLiquidityUsd: defaults.minLiquidityUsd * (profile.liquidityMultiplier || 1),
-    minHolderCount: defaults.minHolderCount * (profile.holderMultiplier || 1),
-    minBuys5m: defaults.minBuys5m * (profile.buysMultiplier || 1),
-    minPoolAgeSeconds:
-      profile.minPoolAgeSeconds !== undefined
-        ? profile.minPoolAgeSeconds
-        : defaults.minPoolAgeSeconds,
-  };
-}
-
-/**
  * Computes a heuristic score for a token candidate (0–100).
  */
-export function computeCandidateScore(
-  token: TokenMetadata,
-  profile: LaunchpadProfile,
-  thresholds: AdjustedThresholds,
-  socialLinks: number
-): number {
-  let score = 50;
-
-  // Launchpad trust bonus — pump.fun/moonshot/raydium tokens get a flat bonus for being on
-  // a known launchpad with verified launch mechanics (previously defined but never applied).
-  score += profile?.scoreBonus ?? 0;
+export function computeCandidateScore(token: TokenMetadata, socialLinks: number): number {
+  // Base 70 = old 50 + pump.fun launchpad bonus (10) + liquidity-ratio bonus (10). Every token that
+  // reaches scoring is pump.fun and clears the liquidity floor, so both were constants.
+  let score = 70;
 
   if (socialLinks >= 3) score += SCORING_WEIGHTS.socialLinkHigh;
   else if (socialLinks >= 1) score += SCORING_WEIGHTS.socialLinkLow;
@@ -146,9 +85,6 @@ export function computeCandidateScore(
       SCORING_WEIGHTS.organicScoreClamp
     );
   }
-  const liquidityRatio = finiteNumber(token.liquidity) / thresholds.minLiquidityUsd;
-  if (liquidityRatio > 5) score += SCORING_WEIGHTS.liquidityRatioHigh;
-  else if (liquidityRatio > 2) score += SCORING_WEIGHTS.liquidityRatioLow;
 
   if (Number(token.holderCount) >= 10) score += SCORING_WEIGHTS.holderCountHigh;
 
@@ -286,75 +222,6 @@ export function isSlightlyBelowThreshold(
   const numericActual = Number(actual);
   if (!(required > 0) || !Number.isFinite(numericActual)) return false;
   return numericActual >= required * (1 - ctx.config.borderlineThresholdBufferRatio);
-}
-
-/**
- * Computes the effective minimum entry score, applying GMI regime and trade-starvation adaptation.
- *
- * Legacy (live mode / adaptive disabled): quiet market (GMI < 0.3) tightens gate by +5,
- * hot market (GMI > 0.7) loosens by -5.
- *
- * Adaptive (paper mode, or live with opt-in): gate is NEVER tightened. Dead market relaxes
- * toward `minCandidateScoreFloor`; prolonged starvation relaxes further so the bot keeps
- * sampling instead of freezing at zero trades.
- */
-export function computeEffectiveMinScore(
-  ctx: Context,
-  baseMinScore: number,
-  now: number = Date.now()
-): { effective: number; note: string | null } {
-  const gmi = typeof ctx.calculateGMI === 'function' ? ctx.calculateGMI() : 0.5;
-  const adaptiveActive =
-    ctx.config.adaptiveFloorEnabled &&
-    (ctx.config.paperTrading || ctx.config.adaptiveFloorLiveEnabled);
-
-  if (!adaptiveActive) {
-    if (gmi < 0.3) {
-      const effective = baseMinScore + 5;
-      return {
-        effective,
-        note: `GMI low (${(gmi * 100).toFixed(1)}%): MinScore +5 (${effective})`,
-      };
-    }
-    if (gmi > 0.7) {
-      const effective = baseMinScore - 5;
-      return {
-        effective,
-        note: `GMI high (${(gmi * 100).toFixed(1)}%): MinScore -5 (${effective})`,
-      };
-    }
-    return { effective: baseMinScore, note: null };
-  }
-
-  const floor = Math.min(baseMinScore, ctx.config.minCandidateScoreFloor);
-  let adjusted = baseMinScore;
-  const reasons: string[] = [];
-
-  // Regime loosening: a dead market relaxes the gate up to halfway toward the floor.
-  if (gmi < 0.3) {
-    const deadness = (0.3 - gmi) / 0.3; // 0 at GMI 0.3 → 1 at GMI 0
-    adjusted -= (baseMinScore - floor) * 0.5 * deadness;
-    reasons.push(`GMI low (${(gmi * 100).toFixed(1)}%): loosen`);
-  }
-
-  // Starvation relaxation: relax further the longer it's been since the last buy.
-  const ref = ctx.state.lastBuyAt ?? SESSION_START;
-  const starvationMs = Math.max(1, ctx.config.tradeStarvationMinutes) * 60_000;
-  const elapsed = now - ref;
-  if (elapsed > starvationMs) {
-    const intervals = Math.floor((elapsed - starvationMs) / starvationMs) + 1;
-    adjusted -= intervals * ctx.config.starvationRelaxStep;
-    reasons.push(
-      `starved ${Math.floor(elapsed / 60_000)}m: -${intervals * ctx.config.starvationRelaxStep}`
-    );
-  }
-
-  const effective = clamp(adjusted, floor, baseMinScore);
-  const note =
-    reasons.length > 0
-      ? `Adaptive MinScore ${effective.toFixed(1)} (base ${baseMinScore}, floor ${floor}; ${reasons.join(', ')})`
-      : null;
-  return { effective, note };
 }
 
 /**

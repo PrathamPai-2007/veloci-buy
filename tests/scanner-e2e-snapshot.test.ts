@@ -48,15 +48,7 @@ test('snapshot scanForCandidates: full pipeline with approved + rejected + reche
     notes: ['standard evaluation passed'],
     candidateScore: 85,
     volatilityScaler: 1,
-    launchpadProfile: {
-      scoreBonus: 10,
-      liquidityMultiplier: 0.75,
-      holderMultiplier: 0.7,
-      buysMultiplier: 0.75,
-      minPoolAgeSeconds: 5,
-      name: 'pump.fun',
-    },
-    adjustedThresholds: {} as any,
+
     token: approvedToken,
   };
 
@@ -67,15 +59,7 @@ test('snapshot scanForCandidates: full pipeline with approved + rejected + reche
     notes: [],
     candidateScore: 30,
     volatilityScaler: 1,
-    launchpadProfile: {
-      scoreBonus: 10,
-      liquidityMultiplier: 0.75,
-      holderMultiplier: 0.7,
-      buysMultiplier: 0.75,
-      minPoolAgeSeconds: 5,
-      name: 'pump.fun',
-    },
-    adjustedThresholds: {} as any,
+
     token: rejectedToken,
   };
 
@@ -86,15 +70,7 @@ test('snapshot scanForCandidates: full pipeline with approved + rejected + reche
     notes: [],
     candidateScore: 65,
     volatilityScaler: 1,
-    launchpadProfile: {
-      scoreBonus: 10,
-      liquidityMultiplier: 0.75,
-      holderMultiplier: 0.7,
-      buysMultiplier: 0.75,
-      minPoolAgeSeconds: 5,
-      name: 'pump.fun',
-    },
-    adjustedThresholds: {} as any,
+
     token: recheckToken,
   };
 
@@ -246,15 +222,7 @@ test('snapshot scanForCandidates: all hard-rejected tokens are tracked', async (
     notes: [],
     candidateScore: 0,
     volatilityScaler: 1,
-    launchpadProfile: {
-      scoreBonus: 10,
-      liquidityMultiplier: 0.75,
-      holderMultiplier: 0.7,
-      buysMultiplier: 0.75,
-      minPoolAgeSeconds: 5,
-      name: 'pump.fun',
-    },
-    adjustedThresholds: {} as any,
+
     token: hardRejectedToken,
   };
 

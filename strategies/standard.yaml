@@ -36,11 +36,11 @@ mintSignalMaxAttempts: 2
 mintSignalRetryDelayMs: 500
 
 # --- Entry gates ---
-minLiquidityUsd: 4000 # pump.fun profile scales x0.75 -> $3k effective entry floor
+minLiquidityUsd: 2500 # entry floor, applied as-is (must exceed liquidityCollapseThresholdUsd)
 minOrganicScore: 0
-minHolderCount: 5
+minHolderCount: 4
 minBuys5m: 1
-minPoolAgeSeconds: 0
+minPoolAgeSeconds: 5
 maxCandidateAgeMinutes: 30
 minSocialLinks: 0
 maxAuditTopHoldersPct: 66
@@ -83,7 +83,6 @@ survivalDelaySeconds: 20
 survivalDelayThresholdHigh: 75
 survivalDelayThresholdVeryHigh: 90
 finalAuditSeconds: 5
-minSurvivalMomentum: 1.025
 minBreakoutMultiplier: 1.025
 maxPriceDumpPct: 18
 maxLiquidityDrawdownPct: 15
@@ -191,7 +190,7 @@ rugExitMaxSpreadPct: 0.15
 rugExitSpreadExpansionMultiplier: 2
 rugExitVolumeGuardEnabled: true
 rugExitSellDominanceMultiplier: 2.5
-liquidityCollapseThresholdUsd: 320 # entry floor = this x 1.25 = $400
+liquidityCollapseThresholdUsd: 320
 liquidityCollapseThresholdRatio: 0.25
 insiderDriftConcentrationTop5: 0.6
 
@@ -205,9 +204,6 @@ lossStreakCooldownMinutes: 20
 lossStreakWindowSize: 4
 expectancyBreakerEnabled: true
 moodPauseDurationMinutes: 60
-minCandidateScoreFloor: 50
-tradeStarvationMinutes: 45
-starvationRelaxStep: 4
 
 # --- ML gate (read by src/ml; env ML_SCORE_* still overrides) ---
 mlScoreGateThreshold: 0.35

@@ -175,7 +175,7 @@ See [geyser-plugin/README.md](../geyser-plugin/README.md).
 ### ML
 
 The ML module is configured separately through `ML_ENABLED`, `ML_*`, `GHOST_*`,
-`ENTRY_TUNER_*` and `ADAPTIVE_FLOOR_*`. See the ML block in [`.env.example`](../.env.example).
+and `ENTRY_TUNER_*`. See the ML block in [`.env.example`](../.env.example).
 The ML module isn't covered by this config split yet.
 
 ---
@@ -226,11 +226,11 @@ All keys and defaults in `strategies/standard.yaml`, in file order. Units:
 
 | Key                                | Default          | Meaning                                                                                  |
 | ---------------------------------- | ---------------- | ---------------------------------------------------------------------------------------- |
-| `minLiquidityUsd`                  | `300`            | Minimum pool liquidity (USD).                                                            |
+| `minLiquidityUsd`                  | `2500`           | Entry liquidity floor (USD), applied as-is. Must exceed `liquidityCollapseThresholdUsd`. |
 | `minOrganicScore`                  | `0`              | Minimum Jupiter organic score.                                                           |
-| `minHolderCount`                   | `5`              | Minimum holder count. Below it the token is waitlisted for `holderCountWaitlistSeconds`. |
+| `minHolderCount`                   | `4`              | Minimum holder count. Below it the token is waitlisted for `holderCountWaitlistSeconds`. |
 | `minBuys5m`                        | `1`              | Minimum buys in the last 5 minutes.                                                      |
-| `minPoolAgeSeconds`                | `0`              | Minimum pool age.                                                                        |
+| `minPoolAgeSeconds`                | `5`              | Minimum pool age.                                                                        |
 | `maxCandidateAgeMinutes`           | `30`             | Tokens older than this are ignored.                                                      |
 | `minSocialLinks`                   | `0`              | Minimum number of social links (website, twitter, telegram).                             |
 | `maxAuditTopHoldersPct`            | `66`             | Maximum share (%) held by the audited top holders.                                       |
@@ -257,7 +257,6 @@ All keys and defaults in `strategies/standard.yaml`, in file order. Units:
 | `survivalDelayThresholdHigh`     | `75`    | Score at or above which the survival delay shrinks to 50%.                                                   |
 | `survivalDelayThresholdVeryHigh` | `90`    | Score at or above which the survival delay shrinks to 10%.                                                   |
 | `finalAuditSeconds`              | `5`     | Delay between passing the deep audit and the final pre-buy audit.                                            |
-| `minSurvivalMomentum`            | `1.05`  | Minimum price multiple across the survival window.                                                           |
 | `minBreakoutMultiplier`          | `1.05`  | Minimum breakout momentum at evaluation.                                                                     |
 | `maxPriceDumpPct`                | `18`    | Reject if price dumped more than this (%) during the survival window.                                        |
 | `maxLiquidityDrawdownPct`        | `15`    | Reject if liquidity fell more than this (%) during the survival window.                                      |
@@ -386,20 +385,17 @@ All keys and defaults in `strategies/standard.yaml`, in file order. Units:
 
 ### Risk breakers & adaptivity
 
-| Key                         | Default | Meaning                                                      |
-| --------------------------- | ------- | ------------------------------------------------------------ |
-| `maxDailyDrawdownPct`       | `0.3`   | Session drawdown (ratio) that trips the drawdown breaker.    |
-| `circuitBreakerEnabled`     | `true`  | Pause buying once `maxDailyDrawdownPct` is hit.              |
-| `drawdownCooldownMinutes`   | `30`    | Pause length after the drawdown breaker trips.               |
-| `lossStreakBreakerEnabled`  | `true`  | Pause buying after a loss streak.                            |
-| `lossStreakThreshold`       | `3`     | Losses within the window that trip the streak breaker.       |
-| `lossStreakCooldownMinutes` | `20`    | Pause length after the streak breaker trips.                 |
-| `lossStreakWindowSize`      | `4`     | Number of recent trades examined for the streak.             |
-| `expectancyBreakerEnabled`  | `true`  | Pause when recent expectancy turns negative.                 |
-| `moodPauseDurationMinutes`  | `60`    | Pause length when the recent win rate is critical.           |
-| `minCandidateScoreFloor`    | `50`    | Lowest the score gate may relax to during trade starvation.  |
-| `tradeStarvationMinutes`    | `45`    | Minutes without a buy before the score gate starts relaxing. |
-| `starvationRelaxStep`       | `4`     | Points removed from the score gate per starvation interval.  |
+| Key                         | Default | Meaning                                                   |
+| --------------------------- | ------- | --------------------------------------------------------- |
+| `maxDailyDrawdownPct`       | `0.3`   | Session drawdown (ratio) that trips the drawdown breaker. |
+| `circuitBreakerEnabled`     | `true`  | Pause buying once `maxDailyDrawdownPct` is hit.           |
+| `drawdownCooldownMinutes`   | `30`    | Pause length after the drawdown breaker trips.            |
+| `lossStreakBreakerEnabled`  | `true`  | Pause buying after a loss streak.                         |
+| `lossStreakThreshold`       | `3`     | Losses within the window that trip the streak breaker.    |
+| `lossStreakCooldownMinutes` | `20`    | Pause length after the streak breaker trips.              |
+| `lossStreakWindowSize`      | `4`     | Number of recent trades examined for the streak.          |
+| `expectancyBreakerEnabled`  | `true`  | Pause when recent expectancy turns negative.              |
+| `moodPauseDurationMinutes`  | `60`    | Pause length when the recent win rate is critical.        |
 
 ### ML gate (read by src/ml; env ML*SCORE*\* still overrides)
 

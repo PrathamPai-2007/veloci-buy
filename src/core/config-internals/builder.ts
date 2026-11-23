@@ -579,8 +579,6 @@ export class ConfigBuilder {
       entryTunerLiveEnabled: p.boolean('ENTRY_TUNER_LIVE_ENABLED', false),
       entryTunerMinSamples: p.int('ENTRY_TUNER_MIN_SAMPLES', 25),
       entryTunerPersist: p.boolean('ENTRY_TUNER_PERSIST', false),
-      adaptiveFloorEnabled: p.boolean('ADAPTIVE_FLOOR_ENABLED', true),
-      adaptiveFloorLiveEnabled: p.boolean('ADAPTIVE_FLOOR_LIVE_ENABLED', false),
       rugcheckEnabled: p.boolean('RUGCHECK_ENABLED', false),
       bubblemapsEnabled: p.boolean('BUBBLEMAPS_ENABLED', false),
       ...tuning,

@@ -44,8 +44,6 @@ function makeEvalResult(overrides: Partial<EvaluationResult> = {}): EvaluationRe
     notes: [],
     candidateScore: 70,
     volatilityScaler: 1.0,
-    launchpadProfile: { name: 'pumpfun' },
-    adjustedThresholds: { minLiquidityUsd: 500 },
     token: {
       id: 'MintXyz',
       symbol: 'TST',
@@ -262,7 +260,6 @@ function makeConfig(): Config {
     trailingStopDrawdownPct: 0.12,
     minCandidateScore: 64,
     minLiquidityUsd: 500,
-    minSurvivalMomentum: 1.1,
     minBreakoutMultiplier: 1.05,
     takeProfitMultiples: [1.3, 2.1],
     earlyPerformanceGuardSeconds: 15,

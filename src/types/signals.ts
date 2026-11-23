@@ -1,12 +1,4 @@
-import type { LaunchpadProfile } from './config.js';
 import type { TokenMetadata } from './market.js';
-
-export interface AdjustedThresholds {
-  minLiquidityUsd: number;
-  minHolderCount: number;
-  minBuys5m: number;
-  minPoolAgeSeconds: number;
-}
 
 export interface MintSignals {
   decimals: number;
@@ -78,8 +70,6 @@ export interface EvaluationResult {
   notes: string[];
   candidateScore: number;
   volatilityScaler: number;
-  launchpadProfile: LaunchpadProfile & { name: string };
-  adjustedThresholds: AdjustedThresholds;
   token: TokenMetadata;
   mintSignals?: MintSignals;
   rugCheckSignals?: RugCheckSignals | null;

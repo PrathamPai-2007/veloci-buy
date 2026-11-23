@@ -2,14 +2,6 @@ import type { TuningKey } from '../core/tuning-keys.js';
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'trade' | 'debug';
 
-export interface LaunchpadProfile {
-  scoreBonus: number;
-  liquidityMultiplier: number;
-  holderMultiplier: number;
-  buysMultiplier: number;
-  minPoolAgeSeconds: number;
-}
-
 /** A fully-resolved strategy: standard.yaml merged with the selected strategy file. */
 export type PresetStrategy = Pick<Config, TuningKey> & {
   name?: string;
@@ -134,7 +126,6 @@ export interface Config {
   survivalDelayThresholdHigh: number;
   survivalDelayThresholdVeryHigh: number;
   finalAuditSeconds: number;
-  minSurvivalMomentum: number;
   minBreakoutMultiplier: number;
   maxPriceDumpPct: number;
   maxLiquidityDrawdownPct: number;
@@ -243,11 +234,6 @@ export interface Config {
   entryTunerLiveEnabled: boolean;
   entryTunerMinSamples: number;
   entryTunerPersist: boolean;
-  adaptiveFloorEnabled: boolean;
-  adaptiveFloorLiveEnabled: boolean;
-  minCandidateScoreFloor: number;
-  tradeStarvationMinutes: number;
-  starvationRelaxStep: number;
   rugcheckEnabled: boolean;
   bubblemapsEnabled: boolean;
   enableLocalRouting: boolean;

@@ -21,7 +21,7 @@ function safeLog1p(v: number): number {
  * Must be synchronous and zero-I/O.
  */
 export function extractFeatures(evalResult: EvaluationResult): Float32Array {
-  const { token, candidateScore, volatilityScaler, mintSignals, adjustedThresholds } = evalResult;
+  const { token, candidateScore, volatilityScaler, mintSignals } = evalResult;
 
   const liquidity = Math.max(0, Number(token.liquidity ?? 0));
   const fdv = Math.max(0, Number(token.fdv ?? 0));
@@ -78,9 +78,6 @@ export function extractFeatures(evalResult: EvaluationResult): Float32Array {
 
   const top5Share = mintSignals ? clamp(mintSignals.top5Share, 0, 1) : 0;
   const isVerified = token.isVerified ? 1.0 : 0.0;
-
-  // Suppress unused variable warning — adjustedThresholds is intentionally available
-  void adjustedThresholds;
 
   const raw = new Float32Array(FEATURE_DIM);
   raw[0] = safeLog1p(liquidity);

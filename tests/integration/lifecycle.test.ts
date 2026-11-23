@@ -89,20 +89,7 @@ test('Integration Lifecycle: paper buy -> position tracking -> take-profit exit 
       notes: [],
       candidateScore: 85,
       volatilityScaler: 1.0,
-      launchpadProfile: {
-        name: 'pump.fun',
-        scoreBonus: 10,
-        liquidityMultiplier: 1.0,
-        holderMultiplier: 1.0,
-        buysMultiplier: 1.0,
-        minPoolAgeSeconds: 0,
-      },
-      adjustedThresholds: {
-        minLiquidityUsd: 1000,
-        minHolderCount: 4,
-        minBuys5m: 1,
-        minPoolAgeSeconds: 0,
-      },
+
       token,
     };
 

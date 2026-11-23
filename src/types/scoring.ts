@@ -3,8 +3,6 @@ export interface ScoringWeights {
   socialLinkLow: number;
   isVerified: number;
   organicScoreClamp: number;
-  liquidityRatioHigh: number;
-  liquidityRatioLow: number;
   holderCountHigh: number;
   buyPressureBonus: number;
   suspiciousAuditPenalty: number;
