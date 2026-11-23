@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import { Config, PresetStrategy } from '#types/index.js';
 import { TUNING_KEYS, type TuningKey } from '../tuning-keys.js';
 import { NumberParser, numberParser, loadDotEnv } from './env-loaders.js';
@@ -453,7 +454,11 @@ export class ConfigBuilder {
     const paperTrading = p.boolean('PAPER_TRADING', false);
     const sessionType = paperTrading ? 'paper-trading' : 'live-trading';
     const timestamp = new Date().toISOString().replace('T', '_').replace(/[:.]/g, '-').slice(0, 19);
-    const sessionDir = path.join('logs', sessionType, timestamp);
+    // Test runs (node:test sets NODE_TEST_CONTEXT) write sessions to the OS temp dir, not logs/.
+    const logRoot = process.env.NODE_TEST_CONTEXT
+      ? path.join(os.tmpdir(), 'veloci-test-logs')
+      : 'logs';
+    const sessionDir = path.join(logRoot, sessionType, timestamp);
 
     if (!fs.existsSync(sessionDir)) {
       fs.mkdirSync(sessionDir, { recursive: true });
