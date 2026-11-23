@@ -36,7 +36,7 @@ mintSignalMaxAttempts: 2
 mintSignalRetryDelayMs: 500
 
 # --- Entry gates ---
-minLiquidityUsd: 300
+minLiquidityUsd: 4000 # pump.fun profile scales x0.75 -> $3k effective entry floor
 minOrganicScore: 0
 minHolderCount: 5
 minBuys5m: 1
