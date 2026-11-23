@@ -218,7 +218,7 @@ export async function scanForCandidates(
         if (dropPct > config.recheckPriceDropPct) {
           ctx.logger(
             `[Scan] Cancelling pullback recheck for ${entry.mint}: price dropped ${dropPct.toFixed(2)}% from high of ${entry.highestSeenPriceUsd} to ${currentPrice} (limit ${config.recheckPriceDropPct}%)`,
-            'warn'
+            'debug'
           );
           store.trackMint(entry.mint);
           continue;
