@@ -35,6 +35,9 @@ import {
   registerPumpMintPda,
 } from './bot-internals/geyser-coordinator.js';
 import { ScanBackpressureManager } from './bot-internals/backpressure-manager.js';
+
+/** How long the WebSocket stays on a fallback RPC before retrying the primary. */
+const PRIMARY_RPC_RETRY_MS = 10 * 60_000;
 export class VelociBuyBot {
   public config: Config;
   public wallet: KeyPairSigner;
@@ -79,6 +82,7 @@ export class VelociBuyBot {
   // Serializes every scanForCandidates call (discovery + trending) so they never overlap.
   private scanChain: Promise<void> = Promise.resolve();
   private currentRpcSubIndex = 0;
+  private primaryRpcRetryTimer: NodeJS.Timeout | undefined;
   private cachedContext: Context | null = null;
 
   /**
@@ -175,6 +179,20 @@ export class VelociBuyBot {
     this.getCtx().logger(`Rotated WebSocket RPC to index ${this.currentRpcSubIndex}`, 'warn', {
       console: true,
     });
+    // A fallback that reconnects successfully never trips the failure threshold, so without this
+    // the bot stays on it for good. Point back at the primary; the next reconnect picks it up.
+    if (this.currentRpcSubIndex !== 0 && !this.primaryRpcRetryTimer) {
+      this.primaryRpcRetryTimer = setTimeout(() => {
+        this.primaryRpcRetryTimer = undefined;
+        if (this.currentRpcSubIndex === 0) return;
+        this.currentRpcSubIndex = 0;
+        this.rpcSubscriptions = this.rpcSubscriptionPool[0]!;
+        this.getCtx().logger('Returning WebSocket RPC to primary (index 0).', 'warn', {
+          console: true,
+        });
+      }, PRIMARY_RPC_RETRY_MS);
+      this.primaryRpcRetryTimer.unref();
+    }
   }
 
   /**
@@ -615,6 +633,7 @@ export class VelociBuyBot {
     }
 
     ghostTrader.stop();
+    clearTimeout(this.primaryRpcRetryTimer);
     mlService.stop();
     this.geyserCoordinator.stop();
 
